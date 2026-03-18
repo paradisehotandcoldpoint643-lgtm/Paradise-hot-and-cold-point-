@@ -1,0 +1,185 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: /users/{userId}
+// Document ID: userId (UID from Firebase Auth)
+// Fields:
+//   - uid: string (required, immutable) - Unique identifier for the user.
+//   - name: string (required) - Full name of the user.
+//   - phone: string (optional) - Phone number of the user.
+//   - email: string (required, immutable) - Email address of the user.
+//   - address: string (optional) - Default delivery address.
+//   - role: string (required, enum: ["customer", "admin", "delivery"]) - User role for access control.
+//   - totalOrders: number (optional) - Total number of orders placed.
+//   - totalReviews: number (optional) - Total number of reviews written.
+//   - createdAt: number (optional, immutable) - Timestamp when the profile was created.
+//
+// Collection: /products/{productId}
+// Document ID: productId
+// Fields:
+//   - id: string (optional) - Unique identifier for the product.
+//   - name: string (required) - Name of the product.
+//   - price: number (required, positive) - Price of the product in INR.
+//   - description: string (required) - Detailed description of the product.
+//   - image: string (required, URL) - URL of the product image.
+//   - category: string (required, enum: ["Birthday", "Engagement", "Wedding", "Anniversary", "Custom Cakes", "Kids Cakes", "Cupcakes", "Pastries"]) - Product category.
+//   - available: boolean (required) - Whether the product is currently available.
+//   - createdAt: number (optional, immutable) - Timestamp when the product was added.
+//
+// Collection: /orders/{orderId}
+// Document ID: orderId
+// Fields:
+//   - id: string (optional) - Unique identifier for the order.
+//   - userId: string (required, immutable) - UID of the customer who placed the order.
+//   - userName: string (required) - Name of the customer.
+//   - userPhone: string (required) - Phone number of the customer.
+//   - userEmail: string (required) - Email of the customer.
+//   - items: list (required) - List of items in the order.
+//   - total: number (required, positive) - Total order amount.
+//   - status: string (required, enum: ["pending", "paid", "delivered", "cancelled"]) - Current status of the order.
+//   - deliveryAddress: string (required) - Address for delivery.
+//   - deliveryDate: string (required) - Scheduled delivery date.
+//   - deliveryTimeSlot: string (required) - Scheduled delivery time slot.
+//   - paymentMethod: string (required, enum: ["UPI", "COD"]) - Method of payment.
+//   - paymentScreenshot: string (optional, URL) - URL of the payment screenshot (for UPI).
+//   - paymentVerified: boolean (required) - Whether the payment has been verified by admin.
+//   - createdAt: number (optional, immutable) - Timestamp when the order was placed.
+//
+// Collection: /settings/shop
+// Document ID: shop
+// Fields:
+//   - isOpen: boolean (required) - Whether the shop is currently accepting orders.
+//   - deliveryRadiusKm: number (required, positive) - Maximum delivery radius from the shop.
+//   - defaultAddress: string (required) - Shop's physical address.
+//   - ownerPhone: string (required) - Contact phone number for the shop owner.
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Publicly readable for all collections
+    match /{document=**} {
+      allow read: if true;
+    }
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+         (request.auth.token.email == "paradisehotandcoldpoint643@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isDelivery() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'delivery';
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'name', 'email', 'role']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['customer', 'admin', 'delivery'];
+    }
+
+    function isValidProduct(data) {
+      return hasRequiredFields(['name', 'price', 'description', 'image', 'category', 'available']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.description is string && data.description.size() > 0 && data.description.size() < 2000 &&
+             isValidUrl(data.image) &&
+             data.category in ["Birthday", "Engagement", "Wedding", "Anniversary", "Custom Cakes", "Kids Cakes", "Cupcakes", "Pastries"] &&
+             data.available is bool;
+    }
+
+    function isValidOrder(data) {
+      return hasRequiredFields(['userId', 'userName', 'userPhone', 'userEmail', 'items', 'total', 'status', 'deliveryAddress', 'deliveryDate', 'deliveryTimeSlot', 'paymentMethod', 'paymentVerified']) &&
+             data.userId is string && data.userId.size() > 0 &&
+             data.userName is string && data.userName.size() > 0 &&
+             data.userPhone is string && data.userPhone.size() > 0 &&
+             isValidEmail(data.userEmail) &&
+             data.items is list && data.items.size() > 0 &&
+             data.total is number && data.total >= 0 &&
+             data.status in ["pending", "paid", "delivered", "cancelled"] &&
+             data.deliveryAddress is string && data.deliveryAddress.size() > 0 &&
+             data.deliveryDate is string && data.deliveryDate.size() > 0 &&
+             data.deliveryTimeSlot is string && data.deliveryTimeSlot.size() > 0 &&
+             data.paymentMethod in ["UPI", "COD"] &&
+             data.paymentVerified is bool;
+    }
+
+    function isValidShopSettings(data) {
+      return hasRequiredFields(['isOpen', 'deliveryRadiusKm', 'defaultAddress', 'ownerPhone']) &&
+             data.isOpen is bool &&
+             data.deliveryRadiusKm is number && data.deliveryRadiusKm > 0 &&
+             data.defaultAddress is string && data.defaultAddress.size() > 0 &&
+             data.ownerPhone is string && data.ownerPhone.size() > 0;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin() || isDelivery();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'customer' || isAdmin());
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == resource.data.role || isAdmin()) &&
+                    (request.resource.data.uid == resource.data.uid) &&
+                    (request.resource.data.email == resource.data.email);
+    }
+
+    // Products
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Orders
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin() || isDelivery());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow update: if isAuthenticated() && (isAdmin() || isDelivery() || isOwner(resource.data.userId));
+      allow delete: if isAdmin();
+    }
+
+    // Shop Settings
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

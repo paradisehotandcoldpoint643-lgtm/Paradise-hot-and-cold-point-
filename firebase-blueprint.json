@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information including role and contact details.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for the user." },
+        "name": { "type": "string", "description": "Full name of the user." },
+        "phone": { "type": "string", "description": "Phone number of the user." },
+        "email": { "type": "string", "description": "Email address of the user." },
+        "address": { "type": "string", "description": "Default delivery address." },
+        "role": { "type": "string", "enum": ["customer", "admin", "delivery"], "description": "User role for access control." },
+        "totalOrders": { "type": "integer", "description": "Total number of orders placed." },
+        "totalReviews": { "type": "integer", "description": "Total number of reviews written." },
+        "createdAt": { "type": "integer", "description": "Timestamp when the profile was created." }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Bakery product details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the product." },
+        "name": { "type": "string", "description": "Name of the product." },
+        "price": { "type": "number", "description": "Price of the product in INR." },
+        "description": { "type": "string", "description": "Detailed description of the product." },
+        "image": { "type": "string", "description": "URL of the product image." },
+        "category": { "type": "string", "enum": ["Birthday", "Engagement", "Wedding", "Anniversary", "Custom Cakes", "Kids Cakes", "Cupcakes", "Pastries"], "description": "Product category." },
+        "available": { "type": "boolean", "description": "Whether the product is currently available." },
+        "createdAt": { "type": "integer", "description": "Timestamp when the product was added." }
+      },
+      "required": ["name", "price", "category", "image"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the order." },
+        "userId": { "type": "string", "description": "UID of the customer who placed the order." },
+        "userName": { "type": "string", "description": "Name of the customer." },
+        "userPhone": { "type": "string", "description": "Phone number of the customer." },
+        "userEmail": { "type": "string", "description": "Email of the customer." },
+        "items": { "type": "array", "items": { "type": "object" }, "description": "List of items in the order." },
+        "total": { "type": "number", "description": "Total order amount." },
+        "status": { "type": "string", "enum": ["pending", "paid", "delivered", "cancelled"], "description": "Current status of the order." },
+        "deliveryAddress": { "type": "string", "description": "Address for delivery." },
+        "deliveryDate": { "type": "string", "description": "Scheduled delivery date." },
+        "deliveryTimeSlot": { "type": "string", "description": "Scheduled delivery time slot." },
+        "paymentMethod": { "type": "string", "enum": ["UPI", "COD"], "description": "Method of payment." },
+        "paymentScreenshot": { "type": "string", "description": "URL of the payment screenshot (for UPI)." },
+        "paymentVerified": { "type": "boolean", "description": "Whether the payment has been verified by admin." },
+        "createdAt": { "type": "integer", "description": "Timestamp when the order was placed." }
+      },
+      "required": ["userId", "items", "total", "status", "deliveryAddress", "deliveryDate", "paymentMethod"]
+    },
+    "ShopSettings": {
+      "title": "ShopSettings",
+      "description": "Global shop configuration.",
+      "type": "object",
+      "properties": {
+        "isOpen": { "type": "boolean", "description": "Whether the shop is currently accepting orders." },
+        "deliveryRadiusKm": { "type": "number", "description": "Maximum delivery radius from the shop." },
+        "defaultAddress": { "type": "string", "description": "Shop's physical address." },
+        "ownerPhone": { "type": "string", "description": "Contact phone number for the shop owner." }
+      },
+      "required": ["isOpen"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents."
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Bakery product catalog."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders."
+    },
+    "/settings/shop": {
+      "schema": "ShopSettings",
+      "description": "Global shop settings."
+    }
+  }
+}

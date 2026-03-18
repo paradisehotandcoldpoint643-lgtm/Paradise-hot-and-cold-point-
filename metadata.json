@@ -1,0 +1,9 @@
+{
+  "name": "Paradise Hot and Cold Point",
+  "description": "A modern bakery ordering platform with AI-powered cake assistant and automated product management.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
