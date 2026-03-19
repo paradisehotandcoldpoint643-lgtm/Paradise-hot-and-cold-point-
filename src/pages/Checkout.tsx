@@ -7,23 +7,15 @@ import {
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { collection, addDoc, doc, updateDoc, increment, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useCart } from '../hooks/useCart';
 import { useAuth } from '../hooks/useAuth';
-import { formatCurrency, cn } from '../lib/utils';
+import { formatCurrency, cn, calculateDeliveryFee } from '../lib/utils';
 import { TIME_SLOTS, SHOP_ADDRESS } from '../constants';
 import { toast } from 'react-hot-toast';
 import confetti from 'canvas-confetti';
+import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { Order, ShopSettings } from '../types';
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -31,13 +23,15 @@ export default function Checkout() {
   const { user, profile } = useAuth();
   
   const [step, setStep] = useState(1);
-  const [orderType, setOrderType] = useState<'delivery' | 'booking'>('delivery');
+  const [orderType, setOrderType] = useState<'delivery' | 'pickup'>('delivery');
   const [customerName, setCustomerName] = useState(profile?.name || user?.displayName || '');
   const [customerEmail, setCustomerEmail] = useState(profile?.email || user?.email || '');
   const [customerPhone, setCustomerPhone] = useState(profile?.phone || '');
   const [deliveryDate, setDeliveryDate] = useState('');
   const [timeSlot, setTimeSlot] = useState(TIME_SLOTS[0]);
-  const [address, setAddress] = useState(profile?.address || SHOP_ADDRESS);
+  const [address, setAddress] = useState(profile?.address || '');
+  const [distance, setDistance] = useState<number | null>(null);
+  const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -50,26 +44,12 @@ export default function Checkout() {
         const data = snapshot.data() as ShopSettings;
         setSettings(data);
         if (data.isDeliveryAvailable === false && orderType === 'delivery') {
-          setOrderType('booking');
+          setOrderType('pickup');
         }
       }
     });
     return () => unsub();
   }, [orderType]);
-
-  const handleFirestoreError = (error: any, operation: OperationType, path: string) => {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      operationType: operation,
-      path,
-      authInfo: {
-        userId: user?.uid,
-        email: user?.email,
-      }
-    };
-    console.error('Firestore Error:', JSON.stringify(errInfo));
-    throw new Error(JSON.stringify(errInfo));
-  };
 
   const handleScreenshotUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -79,6 +59,64 @@ export default function Checkout() {
         setScreenshot(reader.result as string);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const placesLib = useMapsLibrary('places');
+  const autocompleteRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!placesLib || !autocompleteRef.current || step !== 2) return;
+    
+    // Clear existing content
+    autocompleteRef.current.innerHTML = '';
+    
+    const el = new (placesLib as any).PlaceAutocompleteElement();
+    autocompleteRef.current.appendChild(el);
+
+    el.addEventListener('gmp-select', async (e: any) => {
+      const place = e.placePrediction.toPlace();
+      await place.fetchFields({ fields: ['displayName', 'location', 'formattedAddress'] });
+      const newAddress = place.formattedAddress || place.displayName || '';
+      setAddress(newAddress);
+      
+      if (place.location) {
+        calculateDistance(place.location);
+      }
+    });
+
+    return () => {
+      if (el) el.remove();
+    };
+  }, [placesLib, step, settings?.defaultAddress]);
+
+  const calculateDistance = async (destination: google.maps.LatLng) => {
+    const origin = settings?.defaultAddress || SHOP_ADDRESS;
+    if (!origin) return;
+    
+    setIsCalculatingDistance(true);
+    try {
+      const service = new google.maps.DistanceMatrixService();
+      const response = await service.getDistanceMatrix({
+        origins: [origin],
+        destinations: [destination],
+        travelMode: google.maps.TravelMode.DRIVING,
+      });
+
+      const element = response.rows[0].elements[0];
+      if (element.status === 'OK') {
+        const distanceInKm = element.distance.value / 1000;
+        setDistance(parseFloat(distanceInKm.toFixed(2)));
+      } else {
+        toast.error('Could not calculate distance. Please enter manually.');
+        setDistance(null);
+      }
+    } catch (error) {
+      console.error('Distance calculation error:', error);
+      toast.error('Error calculating distance.');
+      setDistance(null);
+    } finally {
+      setIsCalculatingDistance(false);
     }
   };
 
@@ -101,6 +139,8 @@ export default function Checkout() {
 
     setIsSubmitting(true);
     const orderPath = 'orders';
+    const deliveryFee = orderType === 'delivery' ? calculateDeliveryFee(settings?.deliveryRatePerKm || 0, Number(distance) || 0) : 0;
+    
     try {
       const orderData: Omit<Order, 'id'> = {
         userId: user.uid,
@@ -109,11 +149,13 @@ export default function Checkout() {
         userEmail: customerEmail,
         orderType,
         items,
-        total: total + 25, // Including tax
+        total: total + 25 + deliveryFee, // Including tax and delivery fee
         status: 'pending',
         deliveryAddress: address,
         deliveryDate: deliveryDate,
         deliveryTimeSlot: timeSlot,
+        deliveryDistance: orderType === 'delivery' ? (Number(distance) || 0) : undefined,
+        deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
         paymentMethod,
         paymentScreenshot: screenshot || null,
         paymentVerified: false,
@@ -232,278 +274,452 @@ export default function Checkout() {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-white/30">Total Amount</span>
-                <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25)}</span>
+                <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25 + (orderType === 'delivery' ? calculateDeliveryFee(settings?.deliveryRatePerKm || 0, Number(distance) || 0) : 0))}</span>
               </div>
             </div>
             <p className="text-xs text-white/20 uppercase tracking-widest font-bold">Redirecting to your profile...</p>
           </motion.div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
-            {/* Left Column: Form */}
-            <div className="lg:col-span-2 space-y-8">
-              <div className="flex items-center gap-4 mb-8">
-                <Link to="/browse" className="p-2 bg-white/5 text-white/50 hover:text-white rounded-lg transition-colors">
-                  <ArrowLeft className="w-5 h-5" />
-                </Link>
-                <h1 className="text-3xl font-black text-white">Checkout</h1>
-              </div>
-
-              {/* Step 1: Order Type & Customer Details */}
-              <section className="bg-[#2A2A2A] border border-white/5 rounded-3xl p-8 space-y-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-[#FFD700] text-[#1A1A1A] rounded-lg flex items-center justify-center font-black">1</div>
-                  <h2 className="text-xl font-bold text-white">Customer Details</h2>
+          <div className="space-y-12">
+            {/* Step Indicator */}
+            <div className="max-w-3xl mx-auto flex items-center justify-between relative">
+              <div className="absolute top-1/2 left-0 w-full h-px bg-white/5 -translate-y-1/2 z-0" />
+              {[
+                { id: 1, name: 'Details', icon: User },
+                { id: 2, name: 'Schedule', icon: Calendar },
+                { id: 3, name: 'Payment', icon: CreditCard },
+              ].map((s) => (
+                <div key={s.id} className="relative z-10 flex flex-col items-center gap-2">
+                  <div className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-500",
+                    step >= s.id ? "bg-[#FFD700] border-[#FFD700] text-[#1A1A1A]" : "bg-[#1A1A1A] border-white/10 text-white/30"
+                  )}>
+                    <s.icon className="w-5 h-5" />
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-black uppercase tracking-widest transition-colors",
+                    step >= s.id ? "text-[#FFD700]" : "text-white/20"
+                  )}>{s.name}</span>
                 </div>
+              ))}
+            </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+              {/* Left Column: Form */}
+              <div className="lg:col-span-2 space-y-8">
+                <div className="flex items-center gap-4 mb-8">
                   <button 
-                    disabled={settings?.isDeliveryAvailable === false}
-                    onClick={() => setOrderType('delivery')}
-                    className={cn(
-                      "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left relative",
-                      orderType === 'delivery' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50",
-                      settings?.isDeliveryAvailable === false && "opacity-50 cursor-not-allowed"
-                    )}
+                    onClick={() => step > 1 ? setStep(step - 1) : navigate('/browse')}
+                    className="p-2 bg-white/5 text-white/50 hover:text-white rounded-lg transition-colors"
                   >
-                    {settings?.isDeliveryAvailable === false && (
-                      <div className="absolute top-2 right-2 px-2 py-0.5 bg-red-500 text-white text-[8px] font-black rounded uppercase">
-                        Unavailable
-                      </div>
-                    )}
-                    <div className="flex justify-between items-center">
-                      <Truck className="w-8 h-8" />
-                      {orderType === 'delivery' && <CheckCircle2 className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <h3 className="font-bold">Home Delivery</h3>
-                      <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Delivered to your door</p>
-                    </div>
+                    <ArrowLeft className="w-5 h-5" />
                   </button>
-
-                  <button 
-                    onClick={() => setOrderType('booking')}
-                    className={cn(
-                      "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left",
-                      orderType === 'booking' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50"
-                    )}
-                  >
-                    <div className="flex justify-between items-center">
-                      <Calendar className="w-8 h-8" />
-                      {orderType === 'booking' && <CheckCircle2 className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <h3 className="font-bold">Cake Booking / Pickup</h3>
-                      <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Reserve your cake for pickup</p>
-                    </div>
-                  </button>
+                  <h1 className="text-3xl font-black text-white">
+                    {step === 1 && "Customer Details"}
+                    {step === 2 && "Schedule"}
+                    {step === 3 && "Payment"}
+                  </h1>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-widest text-white/30">Full Name</label>
-                    <input 
-                      type="text" 
-                      value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
-                      className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
-                      placeholder="Your Name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-widest text-white/30">Email Address</label>
-                    <input 
-                      type="email" 
-                      value={customerEmail}
-                      onChange={(e) => setCustomerEmail(e.target.value)}
-                      className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
-                      placeholder="your@email.com"
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <label className="text-xs font-black uppercase tracking-widest text-white/30">Mobile Number</label>
-                    <input 
-                      type="tel" 
-                      value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
-                      placeholder="Enter 10-digit mobile number"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Step 2: Delivery Details */}
-              <section className="bg-[#2A2A2A] border border-white/5 rounded-3xl p-8 space-y-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-[#FFD700] text-[#1A1A1A] rounded-lg flex items-center justify-center font-black">2</div>
-                  <h2 className="text-xl font-bold text-white">{orderType === 'delivery' ? 'Delivery Schedule' : 'Booking Schedule'}</h2>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
-                      <Calendar className="w-3 h-3" /> Select Date
-                    </label>
-                    <input 
-                      type="date" 
-                      value={deliveryDate}
-                      onChange={(e) => setDeliveryDate(e.target.value)}
-                      min={new Date().toISOString().split('T')[0]}
-                      className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
-                      <Clock className="w-3 h-3" /> Time Slot
-                    </label>
-                    <select 
-                      value={timeSlot}
-                      onChange={(e) => setTimeSlot(e.target.value)}
-                      className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                <AnimatePresence mode="wait">
+                  {step === 1 && (
+                    <motion.section 
+                      key="step1"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      className="bg-[#2A2A2A] border border-white/5 rounded-3xl p-8 space-y-8"
                     >
-                      {TIME_SLOTS.map(slot => (
-                        <option key={slot} value={slot}>{slot}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-[#FFD700] text-[#1A1A1A] rounded-lg flex items-center justify-center font-black">1</div>
+                        <h2 className="text-xl font-bold text-white">How would you like your order?</h2>
+                      </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
-                    <MapPin className="w-3 h-3" /> {orderType === 'delivery' ? 'Delivery Address' : 'Pickup/Booking Details'}
-                  </label>
-                  <textarea 
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder={orderType === 'delivery' ? "Enter your full delivery address..." : "Any special instructions for your booking..."}
-                    className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[100px]"
-                  />
-                  {orderType === 'delivery' && (
-                    <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest">
-                      Delivery radius: 20 KM from Sikandra, Agra
-                    </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <button 
+                          disabled={settings?.isDeliveryAvailable === false}
+                          onClick={() => setOrderType('delivery')}
+                          className={cn(
+                            "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left relative",
+                            orderType === 'delivery' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50",
+                            settings?.isDeliveryAvailable === false && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          {settings?.isDeliveryAvailable === false && (
+                            <div className="absolute top-2 right-2 px-2 py-0.5 bg-red-500 text-white text-[8px] font-black rounded uppercase">
+                              Unavailable
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center">
+                            <Truck className="w-8 h-8" />
+                            {orderType === 'delivery' && <CheckCircle2 className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <h3 className="font-bold">Home Delivery</h3>
+                            <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Delivered to your door</p>
+                          </div>
+                        </button>
+
+                        <button 
+                          onClick={() => setOrderType('pickup')}
+                          className={cn(
+                            "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left",
+                            orderType === 'pickup' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50"
+                          )}
+                        >
+                          <div className="flex justify-between items-center">
+                            <Calendar className="w-8 h-8" />
+                            {orderType === 'pickup' && <CheckCircle2 className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <h3 className="font-bold">Cake Booking / Pickup</h3>
+                            <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Reserve your cake for pickup</p>
+                          </div>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-xs font-black uppercase tracking-widest text-white/30">Full Name</label>
+                          <input 
+                            type="text" 
+                            value={customerName}
+                            onChange={(e) => setCustomerName(e.target.value)}
+                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                            placeholder="Your Name"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-black uppercase tracking-widest text-white/30">Email Address</label>
+                          <input 
+                            type="email" 
+                            value={customerEmail}
+                            onChange={(e) => setCustomerEmail(e.target.value)}
+                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                            placeholder="your@email.com"
+                          />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <label className="text-xs font-black uppercase tracking-widest text-white/30">Mobile Number</label>
+                          <input 
+                            type="tel" 
+                            value={customerPhone}
+                            onChange={(e) => setCustomerPhone(e.target.value)}
+                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                            placeholder="Enter 10-digit mobile number"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          if (!customerName || !customerEmail || !customerPhone) {
+                            toast.error('Please fill in all details');
+                            return;
+                          }
+                          setStep(2);
+                        }}
+                        className="w-full py-4 bg-[#FFD700] text-[#1A1A1A] font-black rounded-xl flex items-center justify-center gap-2"
+                      >
+                        Next: Schedule
+                        <ChevronRight className="w-5 h-5" />
+                      </button>
+                    </motion.section>
                   )}
-                </div>
-              </section>
 
-              {/* Step 3: Payment */}
-              <section className="bg-[#2A2A2A] border border-white/5 rounded-3xl p-8 space-y-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-[#FFD700] text-[#1A1A1A] rounded-lg flex items-center justify-center font-black">3</div>
-                  <h2 className="text-xl font-bold text-white">Payment Method</h2>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <button 
-                    onClick={() => setPaymentMethod('UPI')}
-                    className={cn(
-                      "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left",
-                      paymentMethod === 'UPI' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50"
-                    )}
-                  >
-                    <div className="flex justify-between items-center">
-                      <QrCode className="w-8 h-8" />
-                      {paymentMethod === 'UPI' && <CheckCircle2 className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <h3 className="font-bold">UPI / QR Code</h3>
-                      <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Instant verification via AI</p>
-                    </div>
-                  </button>
-
-                  <button 
-                    onClick={() => setPaymentMethod('COD')}
-                    className={cn(
-                      "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left",
-                      paymentMethod === 'COD' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50"
-                    )}
-                  >
-                    <div className="flex justify-between items-center">
-                      <Banknote className="w-8 h-8" />
-                      {paymentMethod === 'COD' && <CheckCircle2 className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <h3 className="font-bold">Cash on Delivery</h3>
-                      <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Pay at your doorstep</p>
-                    </div>
-                  </button>
-                </div>
-
-                {paymentMethod === 'UPI' && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="space-y-6 pt-4"
-                  >
-                    <div className="flex flex-col md:flex-row gap-8 items-center bg-[#1A1A1A] p-8 rounded-2xl border border-white/5">
-                      <div className="w-48 h-48 bg-white rounded-xl p-2 flex-shrink-0 shadow-2xl shadow-[#FFD700]/10">
-                        <img 
-                          src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9634933663@ptsbi&pn=ParadiseBakery&am=0" 
-                          alt="UPI QR Code"
-                          className="w-full h-full"
-                        />
+                  {step === 2 && (
+                    <motion.section 
+                      key="step2"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      className="bg-[#2A2A2A] border border-white/5 rounded-3xl p-8 space-y-8"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-[#FFD700] text-[#1A1A1A] rounded-lg flex items-center justify-center font-black">2</div>
+                        <h2 className="text-xl font-bold text-white">{orderType === 'delivery' ? 'Delivery Schedule' : 'Booking Schedule'}</h2>
                       </div>
-                      <div className="space-y-4 text-center md:text-left">
-                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#FFD700]/10 rounded-full border border-[#FFD700]/20">
-                          <Sparkles className="w-3 h-3 text-[#FFD700]" />
-                          <span className="text-[8px] font-black text-[#FFD700] uppercase tracking-widest">Owner's Official QR</span>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
+                            <Calendar className="w-3 h-3" /> Select Date
+                          </label>
+                          <input 
+                            type="date" 
+                            value={deliveryDate}
+                            onChange={(e) => setDeliveryDate(e.target.value)}
+                            min={new Date().toISOString().split('T')[0]}
+                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                          />
                         </div>
-                        <h4 className="text-white font-bold text-xl">Scan to Pay</h4>
-                        <p className="text-white/50 text-sm leading-relaxed">
-                          Scan this QR code with any UPI app (GPay, PhonePe, Paytm) to make the payment of <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25)}</span>.
-                        </p>
-                        <div className="flex items-center gap-2 p-3 bg-[#FFD700]/10 rounded-lg border border-[#FFD700]/20">
-                          <AlertCircle className="w-4 h-4 text-[#FFD700]" />
-                          <p className="text-[10px] text-[#FFD700] font-black uppercase tracking-widest">
-                            Take screenshot of payment. AI will verify payment.
-                          </p>
+                        <div className="space-y-2">
+                          <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
+                            <Clock className="w-3 h-3" /> Time Slot
+                          </label>
+                          <select 
+                            value={timeSlot}
+                            onChange={(e) => setTimeSlot(e.target.value)}
+                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                          >
+                            {TIME_SLOTS.map(slot => (
+                              <option key={slot} value={slot}>{slot}</option>
+                            ))}
+                          </select>
                         </div>
-                        <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest text-center md:text-left">
-                          Owner Email: paradisehotandcoldpoint643@gmail.com
-                        </p>
                       </div>
-                    </div>
 
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-black uppercase tracking-widest text-white/30">Upload Payment Screenshot</label>
-                      </div>
-                      <div className="relative group">
-                        <input 
-                          type="file" 
-                          accept="image/*"
-                          onChange={handleScreenshotUpload}
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                        />
-                        <div className={cn(
-                          "w-full py-12 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-4 transition-all",
-                          screenshot ? "border-green-500/50 bg-green-500/5" : "border-white/10 bg-[#1A1A1A] group-hover:border-[#FFD700]/50 group-hover:bg-[#FFD700]/5"
-                        )}>
-                          {screenshot ? (
-                            <>
-                              <div className="w-16 h-16 rounded-lg overflow-hidden border border-green-500/30">
-                                <img src={screenshot} alt="Screenshot" className="w-full h-full object-cover" />
+                      <div className="space-y-2">
+                        <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
+                          <MapPin className="w-3 h-3" /> {orderType === 'delivery' ? 'Delivery Address' : 'Pickup/Booking Details'}
+                        </label>
+                        {orderType === 'delivery' ? (
+                          <div className="space-y-4">
+                            <div ref={autocompleteRef} className="gmp-autocomplete-container" />
+                            <textarea 
+                              value={address}
+                              onChange={(e) => setAddress(e.target.value)}
+                              placeholder="Enter your full delivery address..."
+                              className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[100px]"
+                            />
+                          </div>
+                        ) : (
+                          <textarea 
+                            value={address}
+                            onChange={(e) => setAddress(e.target.value)}
+                            placeholder="Any special instructions for your booking..."
+                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[100px]"
+                          />
+                        )}
+                        {orderType === 'delivery' && (
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
+                                <Truck className="w-3 h-3" /> Distance from Shop (KM)
+                              </label>
+                              <div className="relative">
+                                <input 
+                                  type="text" 
+                                  value={distance === null ? '' : distance}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === '') {
+                                      setDistance(null);
+                                    } else {
+                                      // Allow only numbers and one decimal point
+                                      if (/^\d*\.?\d*$/.test(val)) {
+                                        setDistance(val as any);
+                                      }
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    if (distance !== null) {
+                                      const num = parseFloat(distance as any);
+                                      if (!isNaN(num)) {
+                                        setDistance(parseFloat(num.toFixed(2)));
+                                      } else {
+                                        setDistance(null);
+                                      }
+                                    }
+                                  }}
+                                  onFocus={(e) => {
+                                    if (Number(distance) === 0) {
+                                      e.target.select();
+                                    }
+                                  }}
+                                  className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
+                                  placeholder="Enter estimated distance in KM"
+                                />
+                                {isCalculatingDistance && (
+                                  <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                    <Loader2 className="w-4 h-4 text-[#FFD700] animate-spin" />
+                                  </div>
+                                )}
                               </div>
-                              <p className="text-green-400 text-sm font-bold">Screenshot Uploaded!</p>
+                            </div>
+                            <div className="p-4 bg-purple-400/10 border border-purple-400/20 rounded-xl">
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Calculated Delivery Fee</span>
+                                <span className="text-white font-black">{formatCurrency(calculateDeliveryFee(settings?.deliveryRatePerKm || 0, Number(distance) || 0))}</span>
+                              </div>
+                              <p className="text-[8px] text-purple-400/60 font-bold uppercase tracking-widest">
+                                * Based on {settings?.deliveryRatePerKm || 0} base rate with double policy
+                              </p>
+                            </div>
+                            <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest">
+                              Delivery radius: {settings?.deliveryRadiusKm || 20} KM from {settings?.defaultAddress || 'Sikandra, Agra'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-4">
+                        <button
+                          onClick={() => setStep(1)}
+                          className="flex-1 py-4 bg-white/5 text-white font-black rounded-xl border border-white/10"
+                        >
+                          Back
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!deliveryDate || !address) {
+                              toast.error('Please fill in schedule details');
+                              return;
+                            }
+                            setStep(3);
+                          }}
+                          className="flex-[2] py-4 bg-[#FFD700] text-[#1A1A1A] font-black rounded-xl flex items-center justify-center gap-2"
+                        >
+                          Next: Payment
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </motion.section>
+                  )}
+
+                  {step === 3 && (
+                    <motion.section 
+                      key="step3"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      className="bg-[#2A2A2A] border border-white/5 rounded-3xl p-8 space-y-8"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-[#FFD700] text-[#1A1A1A] rounded-lg flex items-center justify-center font-black">3</div>
+                        <h2 className="text-xl font-bold text-white">Payment Method</h2>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <button 
+                          onClick={() => setPaymentMethod('UPI')}
+                          className={cn(
+                            "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left",
+                            paymentMethod === 'UPI' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50"
+                          )}
+                        >
+                          <div className="flex justify-between items-center">
+                            <QrCode className="w-8 h-8" />
+                            {paymentMethod === 'UPI' && <CheckCircle2 className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <h3 className="font-bold">UPI / QR Code</h3>
+                            <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Manual verification</p>
+                          </div>
+                        </button>
+
+                        <button 
+                          onClick={() => setPaymentMethod('COD')}
+                          className={cn(
+                            "p-6 rounded-2xl border flex flex-col gap-4 transition-all text-left",
+                            paymentMethod === 'COD' ? "bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]" : "bg-[#1A1A1A] border-white/5 text-white/50"
+                          )}
+                        >
+                          <div className="flex justify-between items-center">
+                            <Banknote className="w-8 h-8" />
+                            {paymentMethod === 'COD' && <CheckCircle2 className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <h3 className="font-bold">Cash on Delivery</h3>
+                            <p className="text-[10px] uppercase tracking-widest font-black opacity-60">Pay at your doorstep</p>
+                          </div>
+                        </button>
+                      </div>
+
+                      {paymentMethod === 'UPI' && (
+                        <div className="space-y-6 pt-4">
+                          <div className="flex flex-col md:flex-row gap-8 items-center bg-[#1A1A1A] p-8 rounded-2xl border border-white/5">
+                            <div className="w-48 h-48 bg-white rounded-xl p-2 flex-shrink-0 shadow-2xl shadow-[#FFD700]/10">
+                              <img 
+                                src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9634933663@ptsbi&pn=ParadiseBakery&am=0" 
+                                alt="UPI QR Code"
+                                className="w-full h-full"
+                              />
+                            </div>
+                            <div className="space-y-4 text-center md:text-left">
+                              <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#FFD700]/10 rounded-full border border-[#FFD700]/20">
+                                <Sparkles className="w-3 h-3 text-[#FFD700]" />
+                                <span className="text-[8px] font-black text-[#FFD700] uppercase tracking-widest">Owner's Official QR</span>
+                              </div>
+                              <h4 className="text-white font-bold text-xl">Scan to Pay</h4>
+                              <p className="text-white/50 text-sm leading-relaxed">
+                                Scan this QR code with any UPI app to make the payment of <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25)}</span>.
+                              </p>
+                              <div className="flex items-center gap-2 p-3 bg-[#FFD700]/10 rounded-lg border border-[#FFD700]/20">
+                                <AlertCircle className="w-4 h-4 text-[#FFD700]" />
+                                <p className="text-[10px] text-[#FFD700] font-black uppercase tracking-widest">
+                                  Take screenshot of payment. Admin will verify payment.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            <label className="text-xs font-black uppercase tracking-widest text-white/30">Upload Payment Screenshot</label>
+                            <div className="relative group">
+                              <input 
+                                type="file" 
+                                accept="image/*"
+                                onChange={handleScreenshotUpload}
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                              />
+                              <div className={cn(
+                                "w-full py-12 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-4 transition-all",
+                                screenshot ? "border-green-500/50 bg-green-500/5" : "border-white/10 bg-[#1A1A1A] group-hover:border-[#FFD700]/50 group-hover:bg-[#FFD700]/5"
+                              )}>
+                                {screenshot ? (
+                                  <>
+                                    <div className="w-16 h-16 rounded-lg overflow-hidden border border-green-500/30">
+                                      <img src={screenshot} alt="Screenshot" className="w-full h-full object-cover" />
+                                    </div>
+                                    <p className="text-green-400 text-sm font-bold">Screenshot Uploaded!</p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center">
+                                      <Upload className="w-6 h-6 text-white/30" />
+                                    </div>
+                                    <div className="text-center">
+                                      <p className="text-white font-bold">Click to upload screenshot</p>
+                                      <p className="text-white/30 text-xs">PNG, JPG up to 5MB</p>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-4">
+                        <button
+                          onClick={() => setStep(2)}
+                          className="flex-1 py-4 bg-white/5 text-white font-black rounded-xl border border-white/10"
+                        >
+                          Back
+                        </button>
+                        <button 
+                          onClick={handlePlaceOrder}
+                          disabled={isSubmitting || (paymentMethod === 'UPI' && !screenshot)}
+                          className="flex-[2] py-4 bg-[#FFD700] text-[#1A1A1A] font-black rounded-xl flex items-center justify-center gap-2 hover:bg-[#FFD700]/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                              Placing Order...
                             </>
                           ) : (
                             <>
-                              <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center">
-                                <Upload className="w-6 h-6 text-white/30" />
-                              </div>
-                              <div className="text-center">
-                                <p className="text-white font-bold">Click to upload screenshot</p>
-                                <p className="text-white/30 text-xs">PNG, JPG up to 5MB</p>
-                              </div>
+                              Complete Order
+                              <CheckCircle2 className="w-5 h-5" />
                             </>
                           )}
-                        </div>
+                        </button>
                       </div>
-                    </div>
-                  </motion.div>
-                )}
-              </section>
-            </div>
+                    </motion.section>
+                  )}
+                </AnimatePresence>
+              </div>
 
             {/* Right Column: Summary */}
             <div className="space-y-8">
@@ -532,7 +748,12 @@ export default function Checkout() {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-white/50">Delivery Fee</span>
-                    <span className="text-green-400 font-bold uppercase tracking-widest text-[10px]">Free</span>
+                    <span className={cn(
+                      "font-bold uppercase tracking-widest text-[10px]",
+                      orderType === 'delivery' ? "text-[#FFD700]" : "text-green-400"
+                    )}>
+                      {orderType === 'delivery' ? formatCurrency(calculateDeliveryFee(settings?.deliveryRatePerKm || 0, distance || 0)) : 'Free'}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-white/50">Tax & Handling</span>
@@ -540,13 +761,31 @@ export default function Checkout() {
                   </div>
                   <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                     <span className="text-white font-black text-lg">Total Amount</span>
-                    <span className="text-[#FFD700] font-black text-2xl">{formatCurrency(total + 25)}</span>
+                    <span className="text-[#FFD700] font-black text-2xl">
+                      {formatCurrency(total + 25 + (orderType === 'delivery' ? calculateDeliveryFee(settings?.deliveryRatePerKm || 0, distance || 0) : 0))}
+                    </span>
                   </div>
                 </div>
 
                 <button 
-                  onClick={handlePlaceOrder}
-                  disabled={!deliveryDate || !address || isSubmitting}
+                  onClick={() => {
+                    if (step === 1) {
+                      if (!customerName || !customerEmail || !customerPhone) {
+                        toast.error('Please fill in all details');
+                        return;
+                      }
+                      setStep(2);
+                    } else if (step === 2) {
+                      if (!deliveryDate || !address) {
+                        toast.error('Please fill in schedule details');
+                        return;
+                      }
+                      setStep(3);
+                    } else {
+                      handlePlaceOrder();
+                    }
+                  }}
+                  disabled={isSubmitting || (step === 3 && paymentMethod === 'UPI' && !screenshot)}
                   className="w-full mt-8 py-4 bg-[#FFD700] text-[#1A1A1A] font-black rounded-xl flex items-center justify-center gap-2 hover:bg-[#FFD700]/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (
@@ -556,7 +795,9 @@ export default function Checkout() {
                     </>
                   ) : (
                     <>
-                      Place Order
+                      {step === 1 && "Next: Schedule"}
+                      {step === 2 && "Next: Payment"}
+                      {step === 3 && "Complete Order"}
                       <ChevronRight className="w-5 h-5" />
                     </>
                   )}
@@ -571,6 +812,7 @@ export default function Checkout() {
               </section>
             </div>
           </div>
+        </div>
         )}
       </AnimatePresence>
     </div>

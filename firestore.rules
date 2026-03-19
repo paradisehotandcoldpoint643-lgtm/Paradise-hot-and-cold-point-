@@ -44,6 +44,7 @@
 //   - paymentMethod: string (required, enum: ["UPI", "COD"]) - Method of payment.
 //   - paymentScreenshot: string (optional, URL) - URL of the payment screenshot (for UPI).
 //   - paymentVerified: boolean (required) - Whether the payment has been verified by admin.
+//   - isRated: boolean (optional) - Whether the order has been rated by the customer.
 //   - createdAt: number (optional, immutable) - Timestamp when the order was placed.
 //
 // Collection: /settings/shop
@@ -54,16 +55,21 @@
 //   - defaultAddress: string (required) - Shop's physical address.
 //   - ownerPhone: string (required) - Contact phone number for the shop owner.
 //
+// Collection: /reviews/{reviewId}
+// Document ID: reviewId
+// Fields:
+//   - userId: string (required, immutable) - UID of the user who wrote the review.
+//   - userName: string (required) - Name of the user.
+//   - orderId: string (required, immutable) - ID of the order being reviewed.
+//   - rating: number (required, 1-5) - Rating from 1 to 5 stars.
+//   - comment: string (required) - Review comment.
+//   - createdAt: number (required, immutable) - Timestamp when the review was created.
+//
 // ===============================================================
 
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Publicly readable for all collections
-    match /{document=**} {
-      allow read: if true;
-    }
-
     // Helper Functions
     function isAuthenticated() {
       return request.auth != null;
@@ -77,7 +83,8 @@ service cloud.firestore {
       return isAuthenticated() && 
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-         (request.auth.token.email == "paradisehotandcoldpoint643@gmail.com" && request.auth.token.email_verified == true));
+         (request.auth.token.email == "paradisehotandcoldpoint643@gmail.com") ||
+         (request.auth.token.email == "guptasachin2698@gmail.com"));
     }
 
     function isDelivery() {
@@ -111,7 +118,8 @@ service cloud.firestore {
              data.uid is string && data.uid.size() > 0 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              isValidEmail(data.email) &&
-             data.role in ['customer', 'admin', 'delivery'];
+             data.role in ['customer', 'admin', 'delivery'] &&
+             (!('totalReviews' in data) || data.totalReviews is number);
     }
 
     function isValidProduct(data) {
@@ -125,19 +133,23 @@ service cloud.firestore {
     }
 
     function isValidOrder(data) {
-      return hasRequiredFields(['userId', 'userName', 'userPhone', 'userEmail', 'items', 'total', 'status', 'deliveryAddress', 'deliveryDate', 'deliveryTimeSlot', 'paymentMethod', 'paymentVerified']) &&
+      return hasRequiredFields(['userId', 'userName', 'userPhone', 'userEmail', 'items', 'total', 'status', 'orderType', 'paymentMethod', 'paymentVerified', 'paymentStatus', 'createdAt']) &&
              data.userId is string && data.userId.size() > 0 &&
              data.userName is string && data.userName.size() > 0 &&
              data.userPhone is string && data.userPhone.size() > 0 &&
              isValidEmail(data.userEmail) &&
              data.items is list && data.items.size() > 0 &&
              data.total is number && data.total >= 0 &&
-             data.status in ["pending", "paid", "delivered", "cancelled"] &&
-             data.deliveryAddress is string && data.deliveryAddress.size() > 0 &&
-             data.deliveryDate is string && data.deliveryDate.size() > 0 &&
-             data.deliveryTimeSlot is string && data.deliveryTimeSlot.size() > 0 &&
+             data.status in ["pending", "confirmed", "preparing", "out-for-delivery", "delivered", "cancelled"] &&
+             data.orderType in ["delivery", "pickup"] &&
+             (!('deliveryAddress' in data) || data.deliveryAddress is string) &&
+             (!('deliveryDate' in data) || data.deliveryDate is string) &&
+             (!('deliveryTimeSlot' in data) || data.deliveryTimeSlot is string) &&
              data.paymentMethod in ["UPI", "COD"] &&
-             data.paymentVerified is bool;
+             data.paymentVerified is bool &&
+             data.paymentStatus in ["pending", "verified", "failed"] &&
+             data.createdAt is number &&
+             (!('isRated' in data) || data.isRated is bool);
     }
 
     function isValidShopSettings(data) {
@@ -146,6 +158,16 @@ service cloud.firestore {
              data.deliveryRadiusKm is number && data.deliveryRadiusKm > 0 &&
              data.defaultAddress is string && data.defaultAddress.size() > 0 &&
              data.ownerPhone is string && data.ownerPhone.size() > 0;
+    }
+
+    function isValidReview(data) {
+      return hasRequiredFields(['userId', 'userName', 'orderId', 'rating', 'comment', 'createdAt']) &&
+             data.userId is string && data.userId.size() > 0 &&
+             data.userName is string && data.userName.size() > 0 &&
+             data.orderId is string && data.orderId.size() > 0 &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() > 0 && data.comment.size() < 1000 &&
+             data.createdAt is number;
     }
 
     // ===============================================================
@@ -158,8 +180,7 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'customer' || isAdmin());
       allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
                     (request.resource.data.role == resource.data.role || isAdmin()) &&
-                    (request.resource.data.uid == resource.data.uid) &&
-                    (request.resource.data.email == resource.data.email);
+                    (request.resource.data.uid == resource.data.uid);
     }
 
     // Products
@@ -171,8 +192,8 @@ service cloud.firestore {
     // Orders
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin() || isDelivery());
-      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
-      allow update: if isAuthenticated() && (isAdmin() || isDelivery() || isOwner(resource.data.userId));
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId) && isValidOrder(request.resource.data);
+      allow update: if isAuthenticated() && (isAdmin() || isDelivery() || isOwner(resource.data.userId)) && isValidOrder(request.resource.data);
       allow delete: if isAdmin();
     }
 
@@ -180,6 +201,15 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    // Reviews
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                      isOwner(request.resource.data.userId) && 
+                      isValidReview(request.resource.data);
+      allow update, delete: if isAdmin();
     }
   }
 }

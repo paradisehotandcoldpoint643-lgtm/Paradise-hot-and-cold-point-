@@ -38,7 +38,7 @@ export interface Product {
   weight?: string;
 }
 
-export type OrderType = 'delivery' | 'booking';
+export type OrderType = 'delivery' | 'pickup';
 
 export interface Order {
   id: string;
@@ -53,6 +53,8 @@ export interface Order {
   deliveryAddress: string;
   deliveryDate: string;
   deliveryTimeSlot: string;
+  deliveryDistance?: number;
+  deliveryFee?: number;
   paymentMethod: 'UPI' | 'COD';
   paymentScreenshot?: string;
   paymentVerified: boolean;
@@ -79,6 +81,7 @@ export interface ShopSettings {
   isOpen: boolean;
   isDeliveryAvailable: boolean;
   deliveryRadiusKm: number;
+  deliveryRatePerKm: number;
   defaultAddress: string;
   ownerPhone: string;
 }

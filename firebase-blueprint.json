@@ -67,6 +67,20 @@
         "ownerPhone": { "type": "string", "description": "Contact phone number for the shop owner." }
       },
       "required": ["isOpen"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Customer review for an order.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who wrote the review." },
+        "userName": { "type": "string", "description": "Name of the user." },
+        "orderId": { "type": "string", "description": "ID of the order being reviewed." },
+        "rating": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Rating from 1 to 5 stars." },
+        "comment": { "type": "string", "description": "Review comment." },
+        "createdAt": { "type": "integer", "description": "Timestamp when the review was created." }
+      },
+      "required": ["userId", "orderId", "rating", "comment", "createdAt"]
     }
   },
   "firestore": {
@@ -81,6 +95,10 @@
     "/orders/{orderId}": {
       "schema": "Order",
       "description": "Customer orders."
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Customer reviews."
     },
     "/settings/shop": {
       "schema": "ShopSettings",

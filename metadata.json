@@ -1,6 +1,6 @@
 {
   "name": "Paradise Hot and Cold Point",
-  "description": "A modern bakery ordering platform with AI-powered cake assistant and automated product management.",
+  "description": "A modern bakery ordering platform with automated product management and seamless ordering experience.",
   "requestFramePermissions": [
     "camera",
     "microphone",

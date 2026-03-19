@@ -8,20 +8,11 @@ import {
   MessageSquare, ThumbsUp
 } from 'lucide-react';
 import { collection, query, where, orderBy, onSnapshot, addDoc, doc, updateDoc, increment } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { formatCurrency, cn } from '../lib/utils';
 import { Order } from '../types';
 import { toast } from 'react-hot-toast';
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
 
 export default function Profile() {
   const { user, profile, logout } = useAuth();
@@ -32,19 +23,6 @@ export default function Profile() {
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
-
-  const handleFirestoreError = (error: any, operation: OperationType, path: string) => {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      operationType: operation,
-      path,
-      authInfo: {
-        userId: user?.uid,
-        email: user?.email,
-      }
-    };
-    console.error('Firestore Error:', JSON.stringify(errInfo));
-  };
 
   useEffect(() => {
     if (!user) return;

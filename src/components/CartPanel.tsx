@@ -1,12 +1,12 @@
 import React from 'react';
-import { X, ShoppingBag, Trash2, Plus, Minus, ArrowRight } from 'lucide-react';
+import { X, ShoppingBag, Trash2, Plus, Minus, ArrowRight, Truck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../hooks/useCart';
 import { formatCurrency } from '../lib/utils';
 import { Link } from 'react-router-dom';
 
 export default function CartPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { items, removeItem, updateQuantity, total, itemsCount } = useCart();
+  const { items, removeItem, updateQuantity, total, itemsCount, clearCart } = useCart();
 
   return (
     <AnimatePresence>
@@ -38,13 +38,41 @@ export default function CartPanel({ isOpen, onClose }: { isOpen: boolean; onClos
                   {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
                 </span>
               </div>
-              <button 
-                onClick={onClose}
-                className="p-2 text-white/50 hover:text-white transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
+              <div className="flex items-center gap-2">
+                {items.length > 0 && (
+                  <button 
+                    onClick={clearCart}
+                    className="p-2 text-white/30 hover:text-red-400 transition-colors"
+                    title="Clear Cart"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                )}
+                <button 
+                  onClick={onClose}
+                  className="p-2 text-white/50 hover:text-white transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
             </div>
+
+            {/* Free Delivery Progress */}
+            {items.length > 0 && (
+              <div className="px-6 py-4 bg-[#FFD700]/5 border-b border-white/5">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#FFD700]">Free Delivery Unlocked!</span>
+                  <Truck className="w-4 h-4 text-[#FFD700]" />
+                </div>
+                <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: '100%' }}
+                    className="h-full bg-[#FFD700]"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Items */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">

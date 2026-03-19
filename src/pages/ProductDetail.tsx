@@ -1,24 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ShoppingBag, Star, Clock, ShieldCheck, 
   ArrowLeft, Plus, Minus, Share2, Heart,
-  Truck, Utensils, Info, Loader2, XCircle
+  Truck, Utensils, Info, Loader2, XCircle,
+  ChevronRight
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useCart } from '../hooks/useCart';
-import { formatCurrency, cn } from '../lib/utils';
+import { formatCurrency, cn, calculatePriceByWeight } from '../lib/utils';
 import { Product } from '../types';
 import { toast } from 'react-hot-toast';
 import { CAKE_WEIGHTS } from '../constants';
+
+import { collection, query, where, limit, getDocs } from 'firebase/firestore';
+import ProductCard from '../components/ProductCard';
 
 export default function ProductDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addItem } = useCart();
   const [product, setProduct] = useState<Product | null>(null);
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
   const [selectedWeight, setSelectedWeight] = useState(CAKE_WEIGHTS[1]); // Default to 1kg
@@ -32,7 +37,21 @@ export default function ProductDetail() {
         const docRef = doc(db, 'products', id);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setProduct({ id: docSnap.id, ...docSnap.data() } as Product);
+          const productData = { id: docSnap.id, ...docSnap.data() } as Product;
+          setProduct(productData);
+          
+          // Fetch related products
+          const q = query(
+            collection(db, 'products'),
+            where('category', '==', productData.category),
+            limit(5)
+          );
+          const relatedSnap = await getDocs(q);
+          const related = relatedSnap.docs
+            .map(doc => ({ id: doc.id, ...doc.data() } as Product))
+            .filter(p => p.id !== id)
+            .slice(0, 4);
+          setRelatedProducts(related);
         } else {
           toast.error('Product not found');
           navigate('/browse');
@@ -46,6 +65,7 @@ export default function ProductDetail() {
     };
 
     fetchProduct();
+    window.scrollTo(0, 0);
   }, [id, navigate]);
 
   useEffect(() => {
@@ -185,7 +205,7 @@ export default function ProductDetail() {
               <div className="space-y-1">
                 <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Price</p>
                 <p className="text-4xl font-black text-[#FFD700]">
-                  {formatCurrency((product.weightPrices?.[selectedWeight] || product.price) * quantity)}
+                  {formatCurrency(calculatePriceByWeight(product.price, selectedWeight) * quantity)}
                 </p>
               </div>
               <div className="h-12 w-px bg-white/10" />
@@ -237,7 +257,7 @@ export default function ProductDetail() {
               className="w-full py-5 bg-[#FFD700] text-[#1A1A1A] font-black rounded-2xl flex items-center justify-center gap-3 hover:bg-[#FFD700]/90 transition-all hover:gap-5 group shadow-2xl shadow-[#FFD700]/10"
             >
               <ShoppingBag className="w-6 h-6" />
-              Add to Cart • {formatCurrency((product.weightPrices?.[selectedWeight] || product.price) * quantity)}
+              Add to Cart • {formatCurrency(calculatePriceByWeight(product.price, selectedWeight) * quantity)}
             </button>
             <div className="flex items-center justify-center gap-6 text-white/30 text-[10px] font-black uppercase tracking-widest">
               <div className="flex items-center gap-2">
@@ -269,6 +289,26 @@ export default function ProductDetail() {
           </div>
         </motion.div>
       </div>
+
+      {/* Related Products */}
+      {relatedProducts.length > 0 && (
+        <div className="mt-32 space-y-12">
+          <div className="flex justify-between items-end">
+            <div>
+              <h2 className="text-3xl font-black text-white mb-2">You Might Also Like</h2>
+              <p className="text-white/50">More delicious treats from the {product.category} category</p>
+            </div>
+            <Link to="/browse" className="text-[#FFD700] font-bold flex items-center gap-1 hover:gap-2 transition-all">
+              View All <ChevronRight className="w-4 h-4" />
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            {relatedProducts.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Lightbox */}
       <AnimatePresence>

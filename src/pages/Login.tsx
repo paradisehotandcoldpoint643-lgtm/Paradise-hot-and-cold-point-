@@ -8,13 +8,15 @@ import { toast } from 'react-hot-toast';
 export default function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const [isRegister, setIsRegister] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
 
   const handleGoogleLogin = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
     try {
       await login();
       toast.success('Logged in successfully!');
@@ -22,6 +24,8 @@ export default function Login() {
     } catch (error) {
       console.error(error);
       toast.error('Authentication failed. Please try again.');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -50,11 +54,22 @@ export default function Login() {
         <div className="space-y-6">
           <button 
             onClick={handleGoogleLogin}
-            className="w-full py-4 bg-white text-[#1A1A1A] font-black rounded-xl flex items-center justify-center gap-3 hover:bg-white/90 transition-all hover:gap-5 group shadow-xl"
+            disabled={isLoggingIn}
+            className="w-full py-4 bg-white text-[#1A1A1A] font-black rounded-xl flex items-center justify-center gap-3 hover:bg-white/90 transition-all hover:gap-5 group shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-            Continue with Google
-            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+            {isLoggingIn ? (
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                className="w-5 h-5 border-2 border-[#1A1A1A] border-t-transparent rounded-full"
+              />
+            ) : (
+              <>
+                <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+                Continue with Google
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </>
+            )}
           </button>
 
           <div className="flex items-center gap-3 p-4 bg-[#FFD700]/5 rounded-2xl border border-[#FFD700]/10">

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { Product, CartItem } from '../types';
 import { toast } from 'react-hot-toast';
+import { calculatePriceByWeight } from '../lib/utils';
 
 interface CartContextType {
   items: CartItem[];
@@ -26,7 +27,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const addItem = useCallback((product: Product, weight?: string, quantity: number = 1) => {
     // Determine the price for this weight
-    const price = (weight && product.weightPrices?.[weight]) || product.price;
+    const price = weight ? calculatePriceByWeight(product.price, weight) : product.price;
 
     setItems(current => {
       const existing = current.find(item => item.id === product.id && item.weight === weight);

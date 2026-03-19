@@ -7,26 +7,22 @@ import {
   ChevronRight, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, Power, PowerOff, Truck
 } from 'lucide-react';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, getDoc, limit, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Product, Order, ShopSettings } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { CATEGORIES, PRODUCT_GALLERY, CAKE_WEIGHTS } from '../constants';
 import { toast } from 'react-hot-toast';
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell 
+} from 'recharts';
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'products' | 'analytics'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'products' | 'analytics' | 'settings'>('overview');
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [settings, setSettings] = useState<ShopSettings | null>(null);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isAddingProduct, setIsAddingProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -35,16 +31,6 @@ export default function AdminDashboard() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-
-  const handleFirestoreError = (error: any, operation: OperationType, path: string) => {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      operationType: operation,
-      path,
-    };
-    console.error('Firestore Error:', JSON.stringify(errInfo));
-    toast.error(`Error: ${errInfo.error}`);
-  };
 
   useEffect(() => {
     const ordersPath = 'orders';
@@ -141,6 +127,19 @@ export default function AdminDashboard() {
     }
   };
 
+  const saveAllSettings = async () => {
+    if (!settings) return;
+    setIsSavingSettings(true);
+    try {
+      await setDoc(doc(db, 'settings', 'shop'), settings);
+      toast.success('All settings saved successfully!');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'settings/shop');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -179,6 +178,7 @@ export default function AdminDashboard() {
               { id: 'orders', label: 'Orders', icon: ShoppingBag },
               { id: 'products', label: 'Products', icon: Plus },
               { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+              { id: 'settings', label: 'Settings', icon: Settings },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -245,6 +245,99 @@ export default function AdminDashboard() {
 
         {/* Main Content */}
         <main className="flex-1 space-y-12">
+          {activeTab === 'settings' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-black text-white">Shop Settings</h2>
+                  <p className="text-white/50 font-bold">Manage your store's global configuration</p>
+                </div>
+                <button
+                  onClick={saveAllSettings}
+                  disabled={isSavingSettings}
+                  className="px-6 py-3 bg-[#FFD700] text-[#1A1A1A] rounded-xl font-black flex items-center gap-2 hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100"
+                >
+                  {isSavingSettings ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                  Save All Settings
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* General Settings */}
+                <div className="p-8 bg-[#2A2A2A] border border-white/5 rounded-3xl space-y-6">
+                  <div className="flex items-center gap-3 text-[#FFD700]">
+                    <LayoutDashboard className="w-6 h-6" />
+                    <h3 className="text-xl font-black">General Configuration</h3>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Shop Address</label>
+                      <input 
+                        type="text"
+                        value={settings?.defaultAddress || ''}
+                        onChange={(e) => setSettings(s => s ? { ...s, defaultAddress: e.target.value } : null)}
+                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold focus:border-[#FFD700] outline-none transition-all"
+                        placeholder="Enter shop full address"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Owner Phone</label>
+                      <input 
+                        type="text"
+                        value={settings?.ownerPhone || ''}
+                        onChange={(e) => setSettings(s => s ? { ...s, ownerPhone: e.target.value } : null)}
+                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold focus:border-[#FFD700] outline-none transition-all"
+                        placeholder="Enter owner contact number"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Delivery Settings */}
+                <div className="p-8 bg-[#2A2A2A] border border-white/5 rounded-3xl space-y-6">
+                  <div className="flex items-center gap-3 text-purple-400">
+                    <Truck className="w-6 h-6" />
+                    <h3 className="text-xl font-black">Delivery Configuration</h3>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Delivery Radius (KM)</label>
+                      <input 
+                        type="number"
+                        value={settings?.deliveryRadiusKm || 0}
+                        onChange={(e) => setSettings(s => s ? { ...s, deliveryRadiusKm: parseFloat(e.target.value) } : null)}
+                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold focus:border-[#FFD700] outline-none transition-all"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Rate per KM (Base Rate)</label>
+                      <div className="flex items-center gap-3">
+                        <input 
+                          type="number"
+                          value={settings?.deliveryRatePerKm || 0}
+                          onChange={(e) => setSettings(s => s ? { ...s, deliveryRatePerKm: parseFloat(e.target.value) } : null)}
+                          className="flex-1 px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold focus:border-[#FFD700] outline-none transition-all"
+                        />
+                        <div className="px-4 py-3 bg-purple-400/10 border border-purple-400/20 rounded-xl text-purple-400 text-xs font-black">
+                          DOUBLE POLICY
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-white/30 font-bold italic">
+                        * Delivery charges follow the double policy: Base Rate * 2^(distance-1)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {activeTab === 'overview' && (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -403,6 +496,176 @@ export default function AdminDashboard() {
             </motion.div>
           )}
 
+          {activeTab === 'orders' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-3xl font-black text-white">All Orders</h2>
+                  <p className="text-white/50 font-bold">Manage and track all customer orders</p>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
+                  {['all', 'pending', 'confirmed', 'preparing', 'out-for-delivery', 'delivered', 'cancelled'].map((status) => (
+                    <button
+                      key={status}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+                        status === 'all' 
+                          ? "bg-white/5 text-white hover:bg-white/10" 
+                          : status === 'pending' ? "bg-yellow-400/10 text-yellow-400"
+                          : status === 'confirmed' ? "bg-blue-400/10 text-blue-400"
+                          : status === 'delivered' ? "bg-green-400/10 text-green-400"
+                          : "bg-red-400/10 text-red-400"
+                      )}
+                    >
+                      {status}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-[#2A2A2A] border border-white/5 rounded-3xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="text-[10px] font-black uppercase tracking-widest text-white/30 border-b border-white/5">
+                        <th className="px-6 py-4">Order ID</th>
+                        <th className="px-6 py-4">Customer</th>
+                        <th className="px-6 py-4">Type</th>
+                        <th className="px-6 py-4">Total</th>
+                        <th className="px-6 py-4">Status</th>
+                        <th className="px-6 py-4 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {orders.map((order) => (
+                        <tr key={order.id} className="hover:bg-white/5 transition-colors group">
+                          <td className="px-6 py-4 text-sm font-bold text-white">#{order.id.slice(-6).toUpperCase()}</td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-white font-bold">{order.userName}</div>
+                            <div className="text-[10px] text-white/30">{order.userPhone}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
+                              order.orderType === 'delivery' ? "bg-purple-400/10 text-purple-400" : "bg-orange-400/10 text-orange-400"
+                            )}>
+                              {order.orderType}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm font-black text-[#FFD700]">{formatCurrency(order.total)}</td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                              order.status === 'pending' && "bg-yellow-400/10 text-yellow-400",
+                              order.status === 'confirmed' && "bg-blue-400/10 text-blue-400",
+                              order.status === 'delivered' && "bg-green-400/10 text-green-400",
+                              order.status === 'cancelled' && "bg-red-400/10 text-red-400",
+                            )}>
+                              {order.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex justify-end gap-2">
+                              <button 
+                                onClick={() => setSelectedOrder(order)}
+                                className="p-2 bg-white/5 text-white/50 rounded-lg hover:bg-[#FFD700] hover:text-[#1A1A1A] transition-all"
+                              >
+                                <ChevronRight className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'analytics' && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-black text-white">Analytics</h2>
+                  <p className="text-white/50 font-bold">Track your business performance and growth</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Sales Trend */}
+                <div className="p-8 bg-[#2A2A2A] border border-white/5 rounded-3xl space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-black text-white">Sales Trend</h3>
+                    <select className="bg-white/5 border border-white/10 rounded-lg px-3 py-1 text-xs font-bold text-white outline-none">
+                      <option>Last 7 Days</option>
+                      <option>Last 30 Days</option>
+                    </select>
+                  </div>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={orders.slice().reverse().map(o => ({ date: new Date(o.createdAt).toLocaleDateString(), amount: o.total }))}>
+                        <defs>
+                          <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#FFD700" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#FFD700" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                        <XAxis dataKey="date" stroke="rgba(255,255,255,0.3)" fontSize={10} tickLine={false} axisLine={false} />
+                        <YAxis stroke="rgba(255,255,255,0.3)" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `₹${val}`} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1A1A1A', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                          itemStyle={{ color: '#FFD700', fontWeight: 'bold' }}
+                        />
+                        <Area type="monotone" dataKey="amount" stroke="#FFD700" fillOpacity={1} fill="url(#colorSales)" strokeWidth={3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Popular Categories */}
+                <div className="p-8 bg-[#2A2A2A] border border-white/5 rounded-3xl space-y-6">
+                  <h3 className="text-xl font-black text-white">Popular Categories</h3>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={CATEGORIES.map(cat => ({
+                            name: cat,
+                            value: orders.filter(o => o.items.some(i => i.category === cat)).length
+                          })).filter(c => c.value > 0)}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {CATEGORIES.map((_, index) => (
+                            <Cell key={`cell-${index}`} fill={['#FFD700', '#A78BFA', '#F87171', '#34D399', '#60A5FA'][index % 5]} />
+                          ))}
+                        </Pie>
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1A1A1A', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                          itemStyle={{ color: '#fff', fontWeight: 'bold' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {activeTab === 'products' && (
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -461,11 +724,9 @@ export default function AdminDashboard() {
                           </div>
                           <div className="text-right">
                             <span className="text-[#FFD700] font-black block">{formatCurrency(product.price)}</span>
-                            {product.weightPrices && Object.keys(product.weightPrices).length > 0 && (
-                              <span className="text-white/30 text-[8px] font-black uppercase tracking-widest">
-                                {Object.keys(product.weightPrices).length} weights set
-                              </span>
-                            )}
+                            <span className="text-white/30 text-[8px] font-black uppercase tracking-widest">
+                              Price (1kg)
+                            </span>
                           </div>
                         </div>
                         <p className="text-white/50 text-xs line-clamp-2">{product.description}</p>
@@ -506,7 +767,7 @@ export default function AdminDashboard() {
               <div className="flex justify-between items-start">
                 <div className="space-y-1">
                   <h3 className="text-2xl font-black text-white">Upload PDF Catalogue</h3>
-                  <p className="text-white/50 text-sm">Our AI will extract product names, prices, and images.</p>
+                  <p className="text-white/50 text-sm">We will extract product names, prices, and images from your catalogue.</p>
                 </div>
                 <button onClick={() => setIsUploadingPdf(false)} className="p-2 text-white/30 hover:text-white">
                   <XCircle className="w-6 h-6" />
@@ -585,13 +846,6 @@ export default function AdminDashboard() {
                 const description = formData.get('description') as string;
                 const image = selectedGalleryImage || (formData.get('image') as string);
 
-                // Extract weight prices
-                const weightPrices: Record<string, number> = {};
-                CAKE_WEIGHTS.forEach(w => {
-                  const p = formData.get(`price_${w}`);
-                  if (p) weightPrices[w] = Number(p);
-                });
-
                 if (!name || !price || !category || !description || !image) {
                   toast.error('Please fill all fields');
                   return;
@@ -602,7 +856,6 @@ export default function AdminDashboard() {
                     await updateDoc(doc(db, 'products', editingProduct.id), {
                       name,
                       price,
-                      weightPrices,
                       category,
                       description,
                       image,
@@ -613,7 +866,6 @@ export default function AdminDashboard() {
                     await addDoc(collection(db, 'products'), {
                       name,
                       price,
-                      weightPrices,
                       category,
                       description,
                       image,
@@ -649,7 +901,7 @@ export default function AdminDashboard() {
                     <input name="name" required type="text" defaultValue={editingProduct?.name} className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-widest text-white/30">Price (₹)</label>
+                    <label className="text-xs font-black uppercase tracking-widest text-white/30">Price (1kg) (₹)</label>
                     <input name="price" required type="number" defaultValue={editingProduct?.price} className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50" />
                   </div>
                   <div className="space-y-2">
@@ -661,28 +913,6 @@ export default function AdminDashboard() {
                   <div className="space-y-2">
                     <label className="text-xs font-black uppercase tracking-widest text-white/30">Description</label>
                     <textarea name="description" required defaultValue={editingProduct?.description} className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[120px]" />
-                  </div>
-
-                  {/* Weight-based Pricing */}
-                  <div className="space-y-4 pt-4 border-t border-white/5">
-                    <h4 className="text-sm font-black text-white uppercase tracking-widest">Weight-based Pricing (₹)</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                      {CAKE_WEIGHTS.map(weight => (
-                        <div key={weight} className="space-y-1">
-                          <label className="text-[10px] font-black uppercase tracking-widest text-white/30">{weight}</label>
-                          <input 
-                            name={`price_${weight}`} 
-                            type="number" 
-                            defaultValue={editingProduct?.weightPrices?.[weight]}
-                            placeholder="Price"
-                            className="w-full px-3 py-2 bg-[#1A1A1A] border border-white/5 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700]/50" 
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-white/20 font-bold uppercase tracking-widest">
-                      Leave empty if weight is not available for this product.
-                    </p>
                   </div>
                 </div>
 
@@ -822,8 +1052,14 @@ export default function AdminDashboard() {
                   {selectedOrder.orderType === 'delivery' && (
                     <div className="space-y-2">
                       <h4 className="text-[10px] font-black uppercase tracking-widest text-white/30">Delivery Address</h4>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-2">
                         <p className="text-white text-sm leading-relaxed">{selectedOrder.deliveryAddress}</p>
+                        {selectedOrder.deliveryDistance !== undefined && (
+                          <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/30 pt-2 border-t border-white/5">
+                            <span>Distance: {selectedOrder.deliveryDistance} KM</span>
+                            <span>Fee: {formatCurrency(selectedOrder.deliveryFee || 0)}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

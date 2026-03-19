@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, Star, Heart, ChevronRight, X } from 'lucide-react';
+import { Plus, ShoppingBag, Star, Heart, ChevronRight, X, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { Product } from '../types';
-import { formatCurrency, cn } from '../lib/utils';
+import { formatCurrency, cn, calculatePriceByWeight } from '../lib/utils';
 import { useCart } from '../hooks/useCart';
 import { CAKE_WEIGHTS } from '../constants';
 
@@ -50,6 +50,12 @@ export default function ProductCard({ product }: { product: Product }) {
             
             {/* Badges */}
             <div className="absolute top-3 left-3 flex flex-col gap-2">
+              {product.price > 1000 && (
+                <div className="px-2 py-1 bg-[#FFD700] text-[#1A1A1A] text-[10px] font-black rounded-full flex items-center gap-1 shadow-lg">
+                  <Sparkles className="w-3 h-3" />
+                  TRENDING
+                </div>
+              )}
               <div className="px-2 py-1 bg-[#1A1A1A]/80 backdrop-blur-md text-[#FFD700] text-[10px] font-bold rounded-full flex items-center gap-1 border border-white/10">
                 <Star className="w-3 h-3 fill-[#FFD700]" />
                 4.8
@@ -86,7 +92,7 @@ export default function ProductCard({ product }: { product: Product }) {
             <div className="flex items-center justify-between pt-2">
               <div className="flex flex-col">
                 <span className="text-[#FFD700] font-black text-xl">
-                  {formatCurrency(product.weightPrices?.[selectedWeight] || product.price)}
+                  {formatCurrency(calculatePriceByWeight(product.price, selectedWeight))}
                 </span>
                 <span className="text-white/30 text-[10px] uppercase tracking-widest font-bold">
                   Freshly Baked
@@ -140,9 +146,8 @@ export default function ProductCard({ product }: { product: Product }) {
 
                 <div className="grid grid-cols-2 gap-3">
                   {CAKE_WEIGHTS.map((w) => {
-                    const weightPrice = product.weightPrices?.[w];
-                    const displayPrice = weightPrice || product.price;
-                    const isAvailable = weightPrice !== undefined || product.weightPrices === undefined;
+                    const displayPrice = calculatePriceByWeight(product.price, w);
+                    const isAvailable = product.weightPrices === undefined || product.weightPrices[w] !== undefined;
 
                     return (
                       <button

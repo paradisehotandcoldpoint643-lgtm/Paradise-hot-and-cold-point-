@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Filter, SlidersHorizontal, ChevronDown, X, Loader2 } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Product } from '../types';
 import { CATEGORIES } from '../constants';
 import ProductCard from '../components/ProductCard';
@@ -29,7 +29,7 @@ export default function Browse() {
       setProducts(productsData);
       setLoading(false);
     }, (error) => {
-      console.error("Error fetching products:", error);
+      handleFirestoreError(error, OperationType.LIST, 'products');
       setLoading(false);
     });
 
@@ -82,24 +82,35 @@ export default function Browse() {
         </div>
         
         <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-80">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
+          <div className="relative flex-1 md:w-80 group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30 group-focus-within:text-[#FFD700] transition-colors" />
             <input 
               type="text" 
               placeholder="Search cakes, pastries..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-[#2A2A2A] border border-white/5 rounded-xl text-white placeholder:text-white/20 focus:outline-none focus:border-[#FFD700]/50 transition-all"
+              className="w-full pl-12 pr-12 py-3 bg-[#2A2A2A] border border-white/5 rounded-xl text-white placeholder:text-white/20 focus:outline-none focus:border-[#FFD700]/50 transition-all"
             />
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-white/30 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
           <button 
             onClick={() => setIsFilterOpen(!isFilterOpen)}
             className={cn(
-              "p-3 rounded-xl border transition-all",
+              "p-3 rounded-xl border transition-all relative",
               isFilterOpen ? "bg-[#FFD700] border-[#FFD700] text-[#1A1A1A]" : "bg-[#2A2A2A] border-white/5 text-white/70 hover:text-white"
             )}
           >
             <SlidersHorizontal className="w-6 h-6" />
+            {sortBy !== 'newest' && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-[#FFD700] rounded-full border-2 border-[#1A1A1A]" />
+            )}
           </button>
         </div>
       </div>

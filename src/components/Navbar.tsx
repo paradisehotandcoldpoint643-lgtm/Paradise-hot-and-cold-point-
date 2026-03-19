@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ShoppingBag, Search, Menu, X, User, LogOut, LayoutDashboard, Truck } from 'lucide-react';
+import { ShoppingBag, Search, Menu, X, User, LogOut, LayoutDashboard, Truck, Home, Grid, History } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
@@ -13,14 +13,18 @@ export default function Navbar({ onOpenCart }: { onOpenCart: () => void }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const navLinks = [
-    { name: 'Home', path: '/' },
-    { name: 'Browse', path: '/browse' },
+    { name: 'Home', path: '/', icon: Home },
+    { name: 'Browse', path: '/browse', icon: Grid },
   ];
 
+  if (user) {
+    navLinks.push({ name: 'My Orders', path: '/orders', icon: History });
+  }
+
   if (profile?.role === 'admin') {
-    navLinks.push({ name: 'Admin', path: '/admin' });
+    navLinks.push({ name: 'Admin', path: '/admin', icon: LayoutDashboard });
   } else if (profile?.role === 'delivery') {
-    navLinks.push({ name: 'Delivery', path: '/delivery' });
+    navLinks.push({ name: 'Delivery', path: '/delivery', icon: Truck });
   }
 
   return (
@@ -143,6 +147,47 @@ export default function Navbar({ onOpenCart }: { onOpenCart: () => void }) {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Mobile Bottom Nav */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1A1A1A]/95 backdrop-blur-xl border-t border-white/5 px-4 py-3 z-50 flex items-center justify-around">
+        {navLinks.map((link) => (
+          <Link
+            key={link.path}
+            to={link.path}
+            className={cn(
+              "flex flex-col items-center gap-1 transition-all",
+              location.pathname === link.path ? "text-[#FFD700]" : "text-white/30"
+            )}
+          >
+            <link.icon className="w-5 h-5" />
+            <span className="text-[8px] font-black uppercase tracking-widest">{link.name}</span>
+          </Link>
+        ))}
+        <button 
+          onClick={onOpenCart}
+          className={cn(
+            "flex flex-col items-center gap-1 transition-all relative",
+            itemsCount > 0 ? "text-[#FFD700]" : "text-white/30"
+          )}
+        >
+          <ShoppingBag className="w-5 h-5" />
+          <span className="text-[8px] font-black uppercase tracking-widest">Cart</span>
+          {itemsCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#FFD700] text-[#1A1A1A] text-[10px] font-black rounded-full flex items-center justify-center">
+              {itemsCount}
+            </span>
+          )}
+        </button>
+        <Link 
+          to={user ? "/profile" : "/login"}
+          className={cn(
+            "flex flex-col items-center gap-1 transition-all",
+            location.pathname === "/profile" || location.pathname === "/login" ? "text-[#FFD700]" : "text-white/30"
+          )}
+        >
+          <User className="w-5 h-5" />
+          <span className="text-[8px] font-black uppercase tracking-widest">{user ? "Profile" : "Login"}</span>
+        </Link>
+      </div>
     </nav>
   );
 }

@@ -11,7 +11,7 @@ export const CATEGORIES: Category[] = [
   'Pastries',
 ];
 
-export const SHOP_ADDRESS = "Sec 10, Awas Vikas, Sikandra, Agra";
+export const SHOP_ADDRESS = "House No. 1153, Sec 10, Awas Vikas, Sikandra, Agra";
 export const OWNER_PHONE = "9634933772";
 export const OWNER_EMAIL = "paradisehotandcoldpoint643@gmail.com";
 export const DELIVERY_RADIUS_KM = 20;

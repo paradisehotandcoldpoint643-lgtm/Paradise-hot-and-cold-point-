@@ -6,8 +6,8 @@ import {
   GoogleAuthProvider, 
   signOut 
 } from 'firebase/auth';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 
 interface AuthContextType {
@@ -33,36 +33,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Listen to profile changes
         const profileRef = doc(db, 'users', currentUser.uid);
         const unsubscribeProfile = onSnapshot(profileRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data() as UserProfile;
-            const isAdmin = currentUser.email === 'paradisehotandcoldpoint643@gmail.com';
-            
-            // Auto-upgrade to admin if email matches but role is different
-            if (isAdmin && data.role !== 'admin') {
-              await setDoc(profileRef, { ...data, role: 'admin' }, { merge: true });
-              // The next snapshot will have the updated data
+          try {
+            if (docSnap.exists()) {
+              const data = docSnap.data() as UserProfile;
+              const admins = ['paradisehotandcoldpoint643@gmail.com', 'guptasachin2698@gmail.com'];
+              const isAdmin = currentUser.email ? admins.includes(currentUser.email) : false;
+              
+              // Auto-upgrade to admin if email matches but role is different
+              if (isAdmin && data.role !== 'admin') {
+                console.log('Upgrading user to admin role based on email...');
+                try {
+                  await setDoc(profileRef, { ...data, role: 'admin' }, { merge: true });
+                } catch (err) {
+                  console.error('Failed to upgrade user to admin:', err);
+                  handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}`);
+                }
+              } else {
+                setProfile(data);
+                setLoading(false);
+              }
             } else {
-              setProfile(data);
-              setLoading(false);
+              // Create initial profile if it doesn't exist
+              console.log('Creating initial profile for user...');
+              const admins = ['paradisehotandcoldpoint643@gmail.com', 'guptasachin2698@gmail.com'];
+              const isAdmin = currentUser.email ? admins.includes(currentUser.email) : false;
+              const newProfile: UserProfile = {
+                uid: currentUser.uid,
+                name: currentUser.displayName || 'Guest User',
+                email: currentUser.email || '',
+                phone: '',
+                address: '',
+                role: isAdmin ? 'admin' : 'customer',
+                totalOrders: 0,
+                totalReviews: 0,
+                createdAt: Date.now()
+              };
+              try {
+                await setDoc(profileRef, newProfile);
+                setProfile(newProfile);
+                setLoading(false);
+              } catch (err) {
+                console.error('Failed to create initial profile:', err);
+                handleFirestoreError(err, OperationType.CREATE, `users/${currentUser.uid}`);
+              }
             }
-          } else {
-            // Create initial profile if it doesn't exist
-            const isAdmin = currentUser.email === 'paradisehotandcoldpoint643@gmail.com';
-            const newProfile: UserProfile = {
-              uid: currentUser.uid,
-              name: currentUser.displayName || 'Guest User',
-              email: currentUser.email || '',
-              phone: '',
-              address: '',
-              role: isAdmin ? 'admin' : 'customer',
-              totalOrders: 0,
-              totalReviews: 0,
-              createdAt: Date.now()
-            };
-            await setDoc(profileRef, newProfile);
-            setProfile(newProfile);
-            setLoading(false);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
           }
+        }, (err) => {
+          handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
         });
 
         return () => unsubscribeProfile();
