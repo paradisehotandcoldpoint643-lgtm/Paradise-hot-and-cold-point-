@@ -3,18 +3,17 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, ShoppingBag, MapPin, Calendar, Clock, 
   CreditCard, QrCode, Banknote, Upload, CheckCircle2, 
-  AlertCircle, ChevronRight, Sparkles, Loader2, User, Truck, XCircle
+  AlertCircle, ChevronRight, Sparkles, User, XCircle, Truck, Loader2
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { collection, addDoc, doc, updateDoc, increment, onSnapshot } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useCart } from '../hooks/useCart';
 import { useAuth } from '../hooks/useAuth';
-import { formatCurrency, cn, calculateDeliveryFee } from '../lib/utils';
+import { formatCurrency, cn } from '../lib/utils';
 import { TIME_SLOTS, SHOP_ADDRESS } from '../constants';
 import { toast } from 'react-hot-toast';
 import confetti from 'canvas-confetti';
-import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { Order, ShopSettings } from '../types';
 
 export default function Checkout() {
@@ -30,13 +29,27 @@ export default function Checkout() {
   const [deliveryDate, setDeliveryDate] = useState('');
   const [timeSlot, setTimeSlot] = useState(TIME_SLOTS[0]);
   const [address, setAddress] = useState(profile?.address || '');
-  const [distance, setDistance] = useState<number | null>(null);
-  const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
+  const [cakeInstructions, setCakeInstructions] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [settings, setSettings] = useState<ShopSettings | null>(null);
+
+  React.useEffect(() => {
+    if (itemsCount === 0 && !isSuccess) {
+      navigate('/browse');
+    }
+  }, [itemsCount, isSuccess, navigate]);
+
+  React.useEffect(() => {
+    if (profile) {
+      if (!customerName) setCustomerName(profile.name);
+      if (!customerEmail) setCustomerEmail(profile.email);
+      if (!customerPhone) setCustomerPhone(profile.phone);
+      if (!address && orderType === 'delivery') setAddress(profile.address);
+    }
+  }, [profile, orderType]);
 
   React.useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'shop'), (snapshot) => {
@@ -62,64 +75,6 @@ export default function Checkout() {
     }
   };
 
-  const placesLib = useMapsLibrary('places');
-  const autocompleteRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!placesLib || !autocompleteRef.current || step !== 2) return;
-    
-    // Clear existing content
-    autocompleteRef.current.innerHTML = '';
-    
-    const el = new (placesLib as any).PlaceAutocompleteElement();
-    autocompleteRef.current.appendChild(el);
-
-    el.addEventListener('gmp-select', async (e: any) => {
-      const place = e.placePrediction.toPlace();
-      await place.fetchFields({ fields: ['displayName', 'location', 'formattedAddress'] });
-      const newAddress = place.formattedAddress || place.displayName || '';
-      setAddress(newAddress);
-      
-      if (place.location) {
-        calculateDistance(place.location);
-      }
-    });
-
-    return () => {
-      if (el) el.remove();
-    };
-  }, [placesLib, step, settings?.defaultAddress]);
-
-  const calculateDistance = async (destination: google.maps.LatLng) => {
-    const origin = settings?.defaultAddress || SHOP_ADDRESS;
-    if (!origin) return;
-    
-    setIsCalculatingDistance(true);
-    try {
-      const service = new google.maps.DistanceMatrixService();
-      const response = await service.getDistanceMatrix({
-        origins: [origin],
-        destinations: [destination],
-        travelMode: google.maps.TravelMode.DRIVING,
-      });
-
-      const element = response.rows[0].elements[0];
-      if (element.status === 'OK') {
-        const distanceInKm = element.distance.value / 1000;
-        setDistance(parseFloat(distanceInKm.toFixed(2)));
-      } else {
-        toast.error('Could not calculate distance. Please enter manually.');
-        setDistance(null);
-      }
-    } catch (error) {
-      console.error('Distance calculation error:', error);
-      toast.error('Error calculating distance.');
-      setDistance(null);
-    } finally {
-      setIsCalculatingDistance(false);
-    }
-  };
-
   const handlePlaceOrder = async () => {
     if (!user) {
       toast.error('Please login to place an order');
@@ -139,7 +94,7 @@ export default function Checkout() {
 
     setIsSubmitting(true);
     const orderPath = 'orders';
-    const deliveryFee = orderType === 'delivery' ? calculateDeliveryFee(settings?.deliveryRatePerKm || 0, Number(distance) || 0) : 0;
+    const deliveryFee = orderType === 'delivery' ? (settings?.flatDeliveryFee || 0) : 0;
     
     try {
       const orderData: Omit<Order, 'id'> = {
@@ -151,17 +106,24 @@ export default function Checkout() {
         items,
         total: total + 25 + deliveryFee, // Including tax and delivery fee
         status: 'pending',
-        deliveryAddress: address,
+        deliveryAddress: orderType === 'delivery' ? address : (cakeInstructions || 'Pickup from Shop'),
+        customerAddress: orderType === 'delivery' ? address : 'Pickup from Shop',
+        customerName: customerName,
+        customerPhone: customerPhone,
         deliveryDate: deliveryDate,
         deliveryTimeSlot: timeSlot,
-        deliveryDistance: orderType === 'delivery' ? (Number(distance) || 0) : undefined,
         deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
         paymentMethod,
         paymentScreenshot: screenshot || null,
         paymentVerified: false,
         paymentStatus: 'pending',
         createdAt: Date.now(),
+        notes: cakeInstructions,
       };
+
+      if (orderType === 'pickup') {
+        orderData.customerAddress = 'Pickup from Shop';
+      }
 
       await addDoc(collection(db, orderPath), orderData);
       
@@ -274,7 +236,7 @@ export default function Checkout() {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-white/30">Total Amount</span>
-                <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25 + (orderType === 'delivery' ? calculateDeliveryFee(settings?.deliveryRatePerKm || 0, Number(distance) || 0) : 0))}</span>
+                <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25 + (orderType === 'delivery' ? (settings?.flatDeliveryFee || 0) : 0))}</span>
               </div>
             </div>
             <p className="text-xs text-white/20 uppercase tracking-widest font-bold">Redirecting to your profile...</p>
@@ -475,80 +437,36 @@ export default function Checkout() {
                         </label>
                         {orderType === 'delivery' ? (
                           <div className="space-y-4">
-                            <div ref={autocompleteRef} className="gmp-autocomplete-container" />
+                            <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
+                              <MapPin className="w-3 h-3" /> Delivery Address
+                            </label>
                             <textarea 
                               value={address}
                               onChange={(e) => setAddress(e.target.value)}
                               placeholder="Enter your full delivery address..."
                               className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[100px]"
                             />
-                          </div>
-                        ) : (
-                          <textarea 
-                            value={address}
-                            onChange={(e) => setAddress(e.target.value)}
-                            placeholder="Any special instructions for your booking..."
-                            className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[100px]"
-                          />
-                        )}
-                        {orderType === 'delivery' && (
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
-                                <Truck className="w-3 h-3" /> Distance from Shop (KM)
-                              </label>
-                              <div className="relative">
-                                <input 
-                                  type="text" 
-                                  value={distance === null ? '' : distance}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val === '') {
-                                      setDistance(null);
-                                    } else {
-                                      // Allow only numbers and one decimal point
-                                      if (/^\d*\.?\d*$/.test(val)) {
-                                        setDistance(val as any);
-                                      }
-                                    }
-                                  }}
-                                  onBlur={() => {
-                                    if (distance !== null) {
-                                      const num = parseFloat(distance as any);
-                                      if (!isNaN(num)) {
-                                        setDistance(parseFloat(num.toFixed(2)));
-                                      } else {
-                                        setDistance(null);
-                                      }
-                                    }
-                                  }}
-                                  onFocus={(e) => {
-                                    if (Number(distance) === 0) {
-                                      e.target.select();
-                                    }
-                                  }}
-                                  className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50"
-                                  placeholder="Enter estimated distance in KM"
-                                />
-                                {isCalculatingDistance && (
-                                  <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                                    <Loader2 className="w-4 h-4 text-[#FFD700] animate-spin" />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
                             <div className="p-4 bg-purple-400/10 border border-purple-400/20 rounded-xl">
                               <div className="flex justify-between items-center mb-1">
-                                <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Calculated Delivery Fee</span>
-                                <span className="text-white font-black">{formatCurrency(calculateDeliveryFee(settings?.deliveryRatePerKm || 0, Number(distance) || 0))}</span>
+                                <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Delivery Fee</span>
+                                <span className="text-white font-black">{formatCurrency(settings?.flatDeliveryFee || 0)}</span>
                               </div>
                               <p className="text-[8px] text-purple-400/60 font-bold uppercase tracking-widest">
-                                * Based on {settings?.deliveryRatePerKm || 0} base rate with double policy
+                                * Flat delivery fee applied
                               </p>
                             </div>
-                            <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest">
-                              Delivery radius: {settings?.deliveryRadiusKm || 20} KM from {settings?.defaultAddress || 'Sikandra, Agra'}
-                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <label className="text-xs font-black uppercase tracking-widest text-white/30 flex items-center gap-2">
+                              <Sparkles className="w-3 h-3" /> Cake Customization / Message
+                            </label>
+                            <textarea 
+                              value={cakeInstructions}
+                              onChange={(e) => setCakeInstructions(e.target.value)}
+                              placeholder="Tell us what you want to add to the cake (e.g., message on cake, colors, specific decorations)..."
+                              className="w-full px-4 py-3 bg-[#1A1A1A] border border-white/5 rounded-xl text-white focus:outline-none focus:border-[#FFD700]/50 min-h-[100px]"
+                            />
                           </div>
                         )}
                       </div>
@@ -562,8 +480,12 @@ export default function Checkout() {
                         </button>
                         <button
                           onClick={() => {
-                            if (!deliveryDate || !address) {
-                              toast.error('Please fill in schedule details');
+                            if (!deliveryDate) {
+                              toast.error('Please select a date');
+                              return;
+                            }
+                            if (orderType === 'delivery' && !address) {
+                              toast.error('Please enter delivery address');
                               return;
                             }
                             setStep(3);
@@ -631,7 +553,7 @@ export default function Checkout() {
                           <div className="flex flex-col md:flex-row gap-8 items-center bg-[#1A1A1A] p-8 rounded-2xl border border-white/5">
                             <div className="w-48 h-48 bg-white rounded-xl p-2 flex-shrink-0 shadow-2xl shadow-[#FFD700]/10">
                               <img 
-                                src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9634933663@ptsbi&pn=ParadiseBakery&am=0" 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9634933663@ptsbi&pn=ParadiseBakery&am=${total + 25 + (orderType === 'delivery' ? (settings?.flatDeliveryFee || 0) : 0)}`} 
                                 alt="UPI QR Code"
                                 className="w-full h-full"
                               />
@@ -643,7 +565,7 @@ export default function Checkout() {
                               </div>
                               <h4 className="text-white font-bold text-xl">Scan to Pay</h4>
                               <p className="text-white/50 text-sm leading-relaxed">
-                                Scan this QR code with any UPI app to make the payment of <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25)}</span>.
+                                Scan this QR code with any UPI app to make the payment of <span className="text-[#FFD700] font-bold">{formatCurrency(total + 25 + (orderType === 'delivery' ? (settings?.flatDeliveryFee || 0) : 0))}</span>.
                               </p>
                               <div className="flex items-center gap-2 p-3 bg-[#FFD700]/10 rounded-lg border border-[#FFD700]/20">
                                 <AlertCircle className="w-4 h-4 text-[#FFD700]" />
@@ -728,7 +650,7 @@ export default function Checkout() {
                 
                 <div className="space-y-6 mb-8 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
                   {items.map((item) => (
-                    <div key={item.id} className="flex gap-4">
+                    <div key={`${item.id}-${item.weight}`} className="flex gap-4">
                       <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
                         <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                       </div>
@@ -752,7 +674,7 @@ export default function Checkout() {
                       "font-bold uppercase tracking-widest text-[10px]",
                       orderType === 'delivery' ? "text-[#FFD700]" : "text-green-400"
                     )}>
-                      {orderType === 'delivery' ? formatCurrency(calculateDeliveryFee(settings?.deliveryRatePerKm || 0, distance || 0)) : 'Free'}
+                      {orderType === 'delivery' ? formatCurrency(settings?.flatDeliveryFee || 0) : 'Free'}
                     </span>
                   </div>
                   <div className="flex justify-between text-sm">
@@ -762,7 +684,7 @@ export default function Checkout() {
                   <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                     <span className="text-white font-black text-lg">Total Amount</span>
                     <span className="text-[#FFD700] font-black text-2xl">
-                      {formatCurrency(total + 25 + (orderType === 'delivery' ? calculateDeliveryFee(settings?.deliveryRatePerKm || 0, distance || 0) : 0))}
+                      {formatCurrency(total + 25 + (orderType === 'delivery' ? (settings?.flatDeliveryFee || 0) : 0))}
                     </span>
                   </div>
                 </div>
@@ -776,8 +698,12 @@ export default function Checkout() {
                       }
                       setStep(2);
                     } else if (step === 2) {
-                      if (!deliveryDate || !address) {
-                        toast.error('Please fill in schedule details');
+                      if (!deliveryDate) {
+                        toast.error('Please select a date');
+                        return;
+                      }
+                      if (orderType === 'delivery' && !address) {
+                        toast.error('Please enter delivery address');
                         return;
                       }
                       setStep(3);

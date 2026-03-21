@@ -4,7 +4,7 @@ import {
   ShoppingBag, Package, Truck, CheckCircle2, 
   Clock, XCircle, ChevronRight, Search, 
   Calendar, MapPin, CreditCard, ExternalLink,
-  Loader2, AlertCircle
+  Loader2, AlertCircle, Sparkles
 } from 'lucide-react';
 import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -190,8 +190,8 @@ export default function MyOrders() {
                   {/* Order Items */}
                   <div className="flex-1 space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {order.items.map((item, idx) => (
-                        <div key={idx} className="flex gap-4 p-3 bg-white/5 rounded-2xl border border-white/5">
+                      {order.items.map((item) => (
+                        <div key={`${item.id}-${item.weight}`} className="flex gap-4 p-3 bg-white/5 rounded-2xl border border-white/5">
                           <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0">
                             <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                           </div>
@@ -208,9 +208,9 @@ export default function MyOrders() {
 
                     <div className="flex flex-wrap gap-4 pt-6 border-t border-white/5">
                       <div className="flex items-center gap-2 px-4 py-2 bg-white/5 rounded-xl border border-white/5">
-                        <MapPin className="w-4 h-4 text-[#FFD700]" />
+                        {order.orderType === 'delivery' ? <MapPin className="w-4 h-4 text-[#FFD700]" /> : <Sparkles className="w-4 h-4 text-[#FFD700]" />}
                         <span className="text-[10px] text-white/50 font-bold uppercase tracking-widest truncate max-w-[200px]">
-                          {order.deliveryAddress}
+                          {order.orderType === 'delivery' ? order.deliveryAddress : (order.deliveryAddress === 'Pickup from Shop' ? 'No instructions' : order.deliveryAddress)}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 px-4 py-2 bg-white/5 rounded-xl border border-white/5">

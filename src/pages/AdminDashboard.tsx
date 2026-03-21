@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ShoppingBag, Users, BarChart3, 
   Settings, Plus, FileUp, Search, MoreVertical, 
   CheckCircle2, Clock, XCircle, Trash2, Edit2, 
-  ChevronRight, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, Power, PowerOff, Truck
+  ChevronRight, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, Power, PowerOff, Truck, Maximize2
 } from 'lucide-react';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, getDoc, limit, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -31,6 +31,7 @@ export default function AdminDashboard() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
   useEffect(() => {
     const ordersPath = 'orders';
@@ -307,31 +308,17 @@ export default function AdminDashboard() {
                   
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Delivery Radius (KM)</label>
+                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Flat Delivery Fee (₹)</label>
                       <input 
                         type="number"
-                        value={settings?.deliveryRadiusKm || 0}
-                        onChange={(e) => setSettings(s => s ? { ...s, deliveryRadiusKm: parseFloat(e.target.value) } : null)}
+                        value={settings?.flatDeliveryFee || 0}
+                        onChange={(e) => setSettings(s => s ? { ...s, flatDeliveryFee: parseFloat(e.target.value) } : null)}
                         className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold focus:border-[#FFD700] outline-none transition-all"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-black text-white/30 uppercase tracking-widest">Rate per KM (Base Rate)</label>
-                      <div className="flex items-center gap-3">
-                        <input 
-                          type="number"
-                          value={settings?.deliveryRatePerKm || 0}
-                          onChange={(e) => setSettings(s => s ? { ...s, deliveryRatePerKm: parseFloat(e.target.value) } : null)}
-                          className="flex-1 px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold focus:border-[#FFD700] outline-none transition-all"
-                        />
-                        <div className="px-4 py-3 bg-purple-400/10 border border-purple-400/20 rounded-xl text-purple-400 text-xs font-black">
-                          DOUBLE POLICY
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-white/30 font-bold italic">
-                        * Delivery charges follow the double policy: Base Rate * 2^(distance-1)
-                      </p>
-                    </div>
+                    <p className="text-[10px] text-white/30 font-bold italic">
+                      * A flat delivery fee will be applied to all delivery orders.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -691,13 +678,17 @@ export default function AdminDashboard() {
                 {products.length > 0 ? (
                   products.map((product) => (
                     <div key={product.id} className="bg-[#2A2A2A] border border-white/5 rounded-3xl overflow-hidden group">
-                      <div className="aspect-video relative overflow-hidden bg-black/20">
+                      <div className="aspect-video relative overflow-hidden bg-black/20 group/img">
                         <img 
                           src={product.image} 
                           alt={product.name} 
-                          className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500" 
+                          className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500 cursor-zoom-in" 
+                          onClick={() => setZoomedImage(product.image)}
                         />
-                        <div className="absolute top-4 right-4 flex gap-2">
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                          <Maximize2 className="w-8 h-8 text-white" />
+                        </div>
+                        <div className="absolute top-4 right-4 flex gap-2 z-10">
                           <button 
                             onClick={() => {
                               setEditingProduct(product);
@@ -943,9 +934,9 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-2">
-                      {PRODUCT_GALLERY.map((img, idx) => (
+                      {PRODUCT_GALLERY.map((img) => (
                         <button
-                          key={idx}
+                          key={img}
                           type="button"
                           onClick={() => setSelectedGalleryImage(img)}
                           className={cn(
@@ -970,8 +961,14 @@ export default function AdminDashboard() {
                     />
                   </div>
                   {selectedGalleryImage && (
-                    <div className="aspect-video rounded-2xl overflow-hidden border border-white/10">
-                      <img src={selectedGalleryImage} alt="Preview" className="w-full h-full object-cover" />
+                    <div 
+                      className="aspect-video rounded-2xl overflow-hidden border border-white/10 cursor-zoom-in group/preview relative"
+                      onClick={() => setZoomedImage(selectedGalleryImage)}
+                    >
+                      <img src={selectedGalleryImage} alt="Preview" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/preview:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                        <Maximize2 className="w-6 h-6 text-white" />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1049,29 +1046,36 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {selectedOrder.orderType === 'delivery' && (
-                    <div className="space-y-2">
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-white/30">Delivery Address</h4>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-2">
-                        <p className="text-white text-sm leading-relaxed">{selectedOrder.deliveryAddress}</p>
-                        {selectedOrder.deliveryDistance !== undefined && (
-                          <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/30 pt-2 border-t border-white/5">
-                            <span>Distance: {selectedOrder.deliveryDistance} KM</span>
-                            <span>Fee: {formatCurrency(selectedOrder.deliveryFee || 0)}</span>
-                          </div>
-                        )}
-                      </div>
+                  <div className="space-y-2">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-white/30">
+                      {selectedOrder.orderType === 'delivery' ? 'Delivery Address' : 'Cake Customization'}
+                    </h4>
+                    <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-2">
+                      <p className="text-white text-sm leading-relaxed">
+                        {selectedOrder.orderType === 'pickup' && selectedOrder.deliveryAddress === 'Pickup from Shop' 
+                          ? 'No special instructions' 
+                          : selectedOrder.deliveryAddress}
+                      </p>
+                      {selectedOrder.orderType === 'delivery' && (
+                        <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/30 pt-2 border-t border-white/5">
+                          <span>Delivery Fee: {formatCurrency(selectedOrder.deliveryFee || 0)}</span>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 <div className="space-y-6">
                   <div className="space-y-2">
                     <h4 className="text-[10px] font-black uppercase tracking-widest text-white/30">Order Items</h4>
                     <div className="space-y-2">
-                      {selectedOrder.items.map((item, idx) => (
-                        <div key={idx} className="flex items-center gap-4 p-3 bg-white/5 rounded-2xl border border-white/5">
-                          <img src={item.image} className="w-12 h-12 rounded-lg object-cover" />
+                      {selectedOrder.items.map((item) => (
+                        <div key={`${item.id}-${item.weight}`} className="flex items-center gap-4 p-3 bg-white/5 rounded-2xl border border-white/5">
+                          <img 
+                            src={item.image} 
+                            className="w-12 h-12 rounded-lg object-cover cursor-zoom-in hover:scale-110 transition-transform" 
+                            onClick={() => setZoomedImage(item.image)}
+                          />
                           <div className="flex-1 min-w-0">
                             <p className="text-white font-bold text-xs truncate">{item.name}</p>
                             <p className="text-white/30 text-[10px]">{item.weight} • Qty: {item.quantity}</p>
@@ -1093,14 +1097,12 @@ export default function AdminDashboard() {
                         <h4 className="text-[10px] font-black uppercase tracking-widest text-white/30">Payment Proof</h4>
                       </div>
 
-                      <a 
-                        href={selectedOrder.paymentScreenshot} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="block aspect-video rounded-2xl overflow-hidden border border-white/10 hover:border-[#FFD700]/50 transition-all"
+                      <div 
+                        className="block aspect-video rounded-2xl overflow-hidden border border-white/10 hover:border-[#FFD700]/50 transition-all cursor-zoom-in"
+                        onClick={() => setZoomedImage(selectedOrder.paymentScreenshot!)}
                       >
                         <img src={selectedOrder.paymentScreenshot} className="w-full h-full object-cover" />
-                      </a>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1108,6 +1110,38 @@ export default function AdminDashboard() {
             </motion.div>
           </div>
         )}
+        {/* Image Zoom Modal */}
+        <AnimatePresence>
+          {zoomedImage && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setZoomedImage(null)}
+              className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 md:p-12 cursor-zoom-out"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="relative max-w-5xl w-full max-h-full flex items-center justify-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <img 
+                  src={zoomedImage} 
+                  alt="Zoomed" 
+                  className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10"
+                />
+                <button 
+                  onClick={() => setZoomedImage(null)}
+                  className="absolute -top-12 right-0 p-2 text-white/50 hover:text-white transition-colors flex items-center gap-2 font-black uppercase tracking-widest text-xs"
+                >
+                  Close <XCircle className="w-6 h-6" />
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </AnimatePresence>
     </div>
   );

@@ -25,11 +25,3 @@ export function calculatePriceByWeight(basePrice: number, weight: string): numbe
   }
   return basePrice;
 }
-
-export function calculateDeliveryFee(baseRate: number, distance: number): number {
-  if (distance <= 0) return 0;
-  // Double policy: baseRate * 2^(distance-1)
-  // Assuming distance is in KM and rounded to nearest integer for doubling
-  const roundedDistance = Math.ceil(distance);
-  return baseRate * Math.pow(2, roundedDistance - 1);
-}

@@ -63,6 +63,7 @@ export interface Order {
   customerName?: string; // Added for compatibility
   customerPhone?: string; // Added for compatibility
   customerAddress?: string; // Added for compatibility
+  notes?: string;
 }
 
 export interface UserProfile {
@@ -80,8 +81,7 @@ export interface UserProfile {
 export interface ShopSettings {
   isOpen: boolean;
   isDeliveryAvailable: boolean;
-  deliveryRadiusKm: number;
-  deliveryRatePerKm: number;
+  flatDeliveryFee: number;
   defaultAddress: string;
   ownerPhone: string;
 }

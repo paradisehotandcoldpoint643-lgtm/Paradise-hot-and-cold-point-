@@ -26,13 +26,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let unsubscribeProfile: (() => void) | null = null;
+
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      // Clean up previous profile listener
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       setUser(currentUser);
       
       if (currentUser) {
         // Listen to profile changes
         const profileRef = doc(db, 'users', currentUser.uid);
-        const unsubscribeProfile = onSnapshot(profileRef, async (docSnap) => {
+        unsubscribeProfile = onSnapshot(profileRef, async (docSnap) => {
           try {
             if (docSnap.exists()) {
               const data = docSnap.data() as UserProfile;
@@ -81,17 +89,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
           }
         }, (err) => {
-          handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
+          // Only report if we still have a user (prevents noise on logout)
+          if (auth.currentUser) {
+            handleFirestoreError(err, OperationType.GET, `users/${currentUser.uid}`);
+          }
         });
-
-        return () => unsubscribeProfile();
       } else {
         setProfile(null);
         setLoading(false);
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   const login = async () => {
