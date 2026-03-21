@@ -9,6 +9,7 @@ import {
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
+import { toast } from 'react-hot-toast';
 
 interface AuthContextType {
   user: User | null;
@@ -107,8 +108,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      console.error('Login failed:', err);
+      if (err.code === 'auth/unauthorized-domain') {
+        toast.error('Domain not authorized! Please add your Netlify URL to "Authorized domains" in Firebase Console.');
+      } else {
+        toast.error('Authentication failed. Please try again.');
+      }
+    }
   };
 
   const logout = async () => {
